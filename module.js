@@ -7,7 +7,10 @@ http://fredkschott.com/post/2014/06/require-and-the-module-system/?utm_source=no
 
 */
 
-var moduleScanner, moduleResolver, Ajax, Promise;
+var moduleScanner = require('./module-scanner');
+var moduleResolver = require('./module-resolver');
+var Ajax = require('./ajax');
+require('@dmail/promise');
 
 var Module = {
 	filename: null, // resolved filename
@@ -98,16 +101,16 @@ var Module = {
 		return dependencyNames;
 	},
 
-	resolve: function(path){
+	resolve: function(what){
 		var promise;
 
-		if( path in this.resolvedPaths ){
-			promise = Promise.resolve(this.resolvedPaths[path]);
+		if( what in this.resolvedPaths ){
+			promise = Promise.resolve(this.resolvedPaths[what]);
 		}
 		else{
-			promise = this._resolve(path, this.filename);
+			promise = this._resolve(what, this.filename);
 			promise = promise.then(function(resolvedPath){
-				this.resolvedPaths[path] = resolvedPath;
+				this.resolvedPaths[what] = resolvedPath;
 			}.bind(this));
 		}
 
@@ -175,7 +178,12 @@ var Module = {
 	// et à retourner le résultat
 	// c'est ce qu'on fait ici
 	require: function(){
-
+		if( path in this.resolvedPaths ){
+			return this.resolvedPaths[path];
+		}
+		else{
+			return require(path);
+		}
 	}
 };
 
@@ -189,11 +197,6 @@ une fois chargé, scan les dépendances
 */
 
 var rootScope, mainModulePath;
-
-Module._eval = function(code, filename){
-	code+= '\n//# sourceURL=' + filename;
-	return window.eval(code);
-};
 
 if( typeof window !== 'undefined' ){
 	rootScope = window;
@@ -223,6 +226,11 @@ if( typeof window !== 'undefined' ){
 			url: url
 		}));
 	};
+
+	Module._eval = function(code, filename){
+		code+= '\n//# sourceURL=' + filename;
+		return window.eval(code);
+	};
 }
 else{
 	rootScope = global;
@@ -233,8 +241,18 @@ else{
 		return resolver.resolve();
 	};
 
-	Module._load = function(){
+	var fs = require('fs');
+	Module._load = function(path){
+		return Promise.callback(function(complete){
+			fs.readFile(path, complete);
+		});
+	};
 
+	var vm = require('vm');
+	Module._eval = function(code, filename){
+		return vm.runInThisContext(code, {
+			filename: filename
+		});
 	};
 }
 
@@ -243,3 +261,5 @@ Module = Module.constructor;
 
 // main module ou rootModule
 var module = new Module(mainModulePath);
+
+module.exports = Module;

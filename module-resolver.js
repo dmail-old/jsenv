@@ -8,17 +8,17 @@ je vais simplifier le process, les modules sont toujours dans un dossier spécif
 on remonte pas les parents pour trouver où ils sont
 */
 
-require('promise/from');
-require('promise/first');
-require('promise/mapFirst');
+require('@dmail/promise/from');
+require('@dmail/promise/first');
+require('@dmail/promise/mapFirst');
 var proto = require('@dmail/proto');
-var debug = require('debug');
+var debug = require('@dmail/debug');
 var path = require('path');
 var fs = require('fs');
 
 var ModuleLocationResolver = proto.extend({
 	moduleFolder: 'node_modules',
- 	moduleFile: 'index',
+	moduleFile: 'index',
 	moduleMeta: 'package.json',
 	extension: '.js',
 

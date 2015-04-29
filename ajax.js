@@ -108,3 +108,5 @@ var Ajax = {
 
 Ajax.constructor.prototype = Ajax;
 Ajax = Ajax.constructor;
+
+module.exports = Ajax;

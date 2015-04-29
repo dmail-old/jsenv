@@ -2,6 +2,11 @@
 	"name": "module",
 	"version": "0.0.1",
 	"dependencies": {
-
+		"@dmail/symbol": "../@dmail/symbol",
+		"@dmail/promise": "../@dmail/promise",
+		"@dmail/iterator": "../@dmail/iterator",
+		"@dmail/for-of": "../@dmail/for-of",
+		"@dmail/proto": "../@dmail/proto",
+		"@dmail/object": "../@dmail/object"
 	}
 }
