@@ -36,4 +36,6 @@ function matchRequires(str, keepComments){
 	return requires;
 }
 
-module.exports = matchRequires;
+module.exports = {
+	scan: matchRequires
+};

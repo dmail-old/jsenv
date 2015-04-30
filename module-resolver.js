@@ -3,11 +3,6 @@ https://github.com/substack/node-resolve/tree/master/lib
 http://nodejs.org/api/modules.html#modules_all_together
 */
 
-/*
-je vais simplifier le process, les modules sont toujours dans un dossier spécifique
-on remonte pas les parents pour trouver où ils sont
-*/
-
 require('@dmail/promise/from');
 require('@dmail/promise/first');
 require('@dmail/promise/mapFirst');
