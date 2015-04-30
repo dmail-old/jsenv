@@ -1,1 +1,1 @@
-console.log('test-2 entered', module);
+return 'world';

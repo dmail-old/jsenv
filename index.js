@@ -40,9 +40,16 @@ function locate(name, pathName, pathValue){
 var System = {
 	core: {},
 	paths: {},
+	extension: '.js',
 
-	resolve: function(baseUrl, uri){
-		return System.resolveUrl(baseUrl, uri);
+	resolve: function(base, uri){
+		var url = System.resolveUrl(base, uri);
+
+		if( url.slice(-(System.extension.length)) != System.extension ){
+			url+= '.js';
+		}
+
+		return url;
 	},
 
 	/*
@@ -107,28 +114,6 @@ if( typeof window !== 'undefined' ){
 
 		return url;
 	};
-	System.parseUrl = function(url){
-		var a = document.createElement('a');
-    	a.href = url;
-		return {
-			href: url,
-			protocol: a.protocol.replace(':',''),
-			slashes: true, // todo,
-			host: a.hostname,
-			auth: '', // todo
-			hostname: a.hostname.toLowerCase(),
-			port: a.port,
-			pathname: a.pathname,
-			search: a.search,
-			path: a.pathname + a.search,
-			query: a.search.slice(1),
-			hash: a.hash.replace('#','')
-		};
-	};
-
-	System.formatUrl = function(properties){
-  		return properties.protocal + properties.host + properties.pathname + properties.search + properties.hash;
-	};
 }
 // node
 else if( typeof process !== 'undefined' ){
@@ -156,12 +141,6 @@ else if( typeof process !== 'undefined' ){
 	var URL = require('url');
 	System.resolveUrl = function(from, to){
 		return URL.resolve(from, to);
-	};
-	System.parseUrl = function(url){
-		return URL.parse(url);
-	};
-	System.formatUrl = function(url){
-		return URL.format(url);
 	};
 }
 // other js envs
@@ -199,17 +178,36 @@ var Module = {
 		this.dependents = [];
 	},
 
-	addDependency: function(filename){
+	toString: function(){
+		return '[Module ' + this.filename + ']';
+	},
+
+	createDependency: function(filename){
 		var module = new Module(filename);
 
-		this.dependencies.push(module);
-		module.dependents.push(this);
+		if( module === this ){
+			throw new Error(this.filename + ' cannot depends on himself');
+		}
+		if( this.dependencies.indexOf(module) !== -1 ){
+			throw new Error(this.filename + ' is dependant of ' + filename);
+		}
+
+		debug(this, 'depends on', filename);
+
+		if( this.dependencies.indexOf(module) === -1 ){
+			this.dependencies.push(module);
+		}
+		if( module.dependents.indexOf(this) === -1 ){
+			module.dependents.push(this);
+		}
 
 		return module;
 	},
 
 	load: function(){
 		var promise;
+
+		debug('loading', this);
 
 		if( this.hasOwnProperty('source') ){
 			promise = Promise.resolve(this.source);
@@ -227,6 +225,8 @@ var Module = {
 	scan: function(){
 		var dependencyNames;
 
+		debug('scanning', this, 'dependencies');
+
 		if( this.hasOwnProperty('dependencyNames') ){
 			dependencyNames = this.dependencyNames;
 		}
@@ -240,22 +240,25 @@ var Module = {
 		return dependencyNames;
 	},
 
-	resolve: function(uri){
+	resolve: function(name){
 		var url;
 
-		if( uri in this.resolvedIds ){
-			url = this.resolvedIds[uri];
+		if( name in this.resolvedIds ){
+			url = this.resolvedIds[name];
 		}
 		else{
-			this.resolvedIds[uri] = System.resolve(this.filename, url);
+			url = System.resolve(this.filename, name);
+			this.resolvedIds[name] = url;
 		}
+
+		debug('resolving', name, 'to', url);
 
 		return url;
 	},
 
 	createDependencies: function(){
 		var dependencyPaths = this.dependencyNames.map(this.resolve, this);
-		var dependencies = dependencyPaths.map(this.addDependency, this);
+		var dependencies = dependencyPaths.map(this.createDependency, this);
 		return dependencies;
 	},
 
@@ -275,7 +278,9 @@ var Module = {
 	compile: function(){
 		var code, fn;
 
-		code = '(function(module){\n\n' + this.source + '\n\n})';
+		debug('compile module function', this);
+
+		code = '(function(module, require){\n\n' + this.source + '\n\n})';
 
 		try{
 			fn = System.eval(code, this.filename);
@@ -291,20 +296,17 @@ var Module = {
 	exec: function(){
 		var result;
 
-		/*
-		this.imports = {};
-		this.dependencies.forEach(function(dependency){
-			this.imports[dependency.name] = dependency.exports;
-		});
-		*/
+		debug('exec module', this);
 
 		try{
-			result = this.fn.call(System.global, this);
+			result = this.fn.call(System.global, this, this.require.bind(this));
 		}
 		catch(e){
 			// execution of the module code raise an error
 			throw e;
 		}
+
+		debug('got the result', result);
 
 		return this.exports = result;
 	},
@@ -315,6 +317,16 @@ var Module = {
 			this.compile();
 			return this.exec();
 		}.bind(this));
+	},
+
+	require: function(name){
+		var url = this.resolve(name);
+		var module = this.cache[url];
+
+		module.compile();
+		module.exec();
+
+		return module.exports;
 	}
 };
 
@@ -322,7 +334,8 @@ Module.constructor.prototype = Module;
 Module = Module.constructor;
 
 System.import = function(name){
-	var module = new Module(name);
+	var filename = System.resolve(System.baseUrl, name);
+	var module = new Module(filename);
 	return module.run();
 };
 
@@ -333,7 +346,61 @@ System.define = function(name, source, options){
 };
 
 if( System.platform === 'node' && require.main === module ){
-	System.import(process.argv[2]).then(console.log, console.error);
+	System.import(process.argv[2]).then(console.log, function(e){
+		console.error(e.stack);
+	});
+}
+
+function shortenPath(filepath){
+	return require('path').relative(System.baseUrl, filepath);
+}
+
+function debug(){
+	var args = Array.prototype.slice.call(arguments);
+
+	args = args.map(function(arg){
+		if( arg instanceof Module ){
+			arg = shortenPath(arg.filename);
+		}
+		else if( String(arg).match(/\\|\//) ){
+			arg = shortenPath(arg);
+		}
+		return arg;
+	});
+
+	console.log.apply(console, args);
 }
 
 module.exports = System;
+
+/*
+System.parseUrl = function(url){
+	return URL.parse(url);
+};
+System.formatUrl = function(url){
+	return URL.format(url);
+};
+
+System.parseUrl = function(url){
+	var a = document.createElement('a');
+	a.href = url;
+	return {
+		href: url,
+		protocol: a.protocol.replace(':',''),
+		slashes: true, // todo,
+		host: a.hostname,
+		auth: '', // todo
+		hostname: a.hostname.toLowerCase(),
+		port: a.port,
+		pathname: a.pathname,
+		search: a.search,
+		path: a.pathname + a.search,
+		query: a.search.slice(1),
+		hash: a.hash.replace('#','')
+	};
+};
+
+System.formatUrl = function(properties){
+		return properties.protocal + properties.host + properties.pathname + properties.search + properties.hash;
+};
+*/

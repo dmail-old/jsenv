@@ -1,3 +1,3 @@
-require('./test-2');
+var result = require('./test-2');
 
-console.log('hello world');
+console.log('hello', result);
