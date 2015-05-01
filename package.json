@@ -1,5 +1,5 @@
 {
-	"name": "system",
+	"name": "@dmail/system",
 	"version": "0.0.1",
 	"dependencies": {
 		"@dmail/symbol": "../@dmail/symbol",
@@ -8,5 +8,9 @@
 		"@dmail/for-of": "../@dmail/for-of",
 		"@dmail/proto": "../@dmail/proto",
 		"@dmail/object": "../@dmail/object"
-	}
+	},
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/dmail/system"
+	},
 }
