@@ -1,3 +1,3 @@
 var result = require('./test-2');
 
-console.log('hello', result);
+return 'hello' + result;

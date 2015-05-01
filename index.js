@@ -5,7 +5,6 @@ https://github.com/joyent/node/blob/master/lib/module.js
 https://github.com/joyent/node/blob/master/src/node.js
 http://fredkschott.com/post/2014/06/require-and-the-module-system/?utm_source=nodeweekly&utm_medium=email
 
-comment rajouter le .js si il manque?
 comment aller chercher proto/index.js lorsque je tape 'proto' (a priori on devra l'indiquer)
 
 */
@@ -17,36 +16,25 @@ require('@dmail/promise/callback');
 require('@dmail/promise/map');
 var moduleScanner = require('./module-scanner');
 
-function locate(name, pathName, pathValue){
-	var starIndex = pathName.indexOf('*'), location = false;
-
-	if( starIndex === -1 ){
-		if( name === pathName ){
-			location = pathValue;
-		}
-	}
-	else{
-		var left = pathName.slice(0, starIndex), right = pathName.slice(starIndex + 1);
-		var nameLeft = name.slice(0, left.length), nameRight = name.slice(name.length - right.length);
-
-		if( left == nameLeft && right == nameRight ){
-			location = pathValue.replace('*', name.slice(left.length, name.length - right.length));
-		}
-	}
-
-	return location;
-}
-
-var System = {
-	core: {},
-	paths: {},
+var SystemLocation = {
 	extension: '.js',
+	paths: {},
+
+	forceExtension: function(pathname, extension){
+		if( pathname.slice(-(extension.length)) != extension ){
+			pathname+= extension;
+		}
+		return pathname;
+	},
 
 	resolve: function(base, uri){
-		var url = System.resolveUrl(base, uri);
+		var url = System.resolveUrl(base, uri), queryIndex = url.indexOf('?');
 
-		if( url.slice(-(System.extension.length)) != System.extension ){
-			url+= '.js';
+		if( queryIndex != -1 ){
+			url = this.forceExtension(url.slice(0, queryIndex), this.extension) + url.slice(queryIndex);
+		}
+		else{
+			url = this.forceExtension(url, this.extension);
 		}
 
 		return url;
@@ -59,20 +47,61 @@ var System = {
 	System.locate('lodash'); /js/lodash.js
 	System.locate('lodash/map'); /js/lodash/map.js
 	*/
-	locate: function(name){
+	locatePath: function(name, key, value){
+		var starIndex = key.indexOf('*'), location = false;
+
+		if( starIndex === -1 ){
+			if( name === key ){
+				location = value;
+			}
+		}
+		else{
+			var left = key.slice(0, starIndex), right = key.slice(starIndex + 1);
+			var nameLeft = name.slice(0, left.length), nameRight = name.slice(name.length - right.length);
+
+			if( left == nameLeft && right == nameRight ){
+				location = value.replace('*', name.slice(left.length, name.length - right.length));
+			}
+		}
+
+		return location;
+	},
+
+	locate: function(base, name){
 		// most specific (longest) match wins
 		var paths = this.paths, location = '', path, match;
 
 		// check to see if we have a paths entry
 		for( path in paths ){
-			match = locate(name, path, paths[path]);
+			match = this.locatePath(name, path, paths[path]);
 
 			if( match && match.length > location.length ){
 				location = match;
 			}
 		}
 
-		return this.resolve(this.baseUrl, location);
+		return this.resolve(base, location);
+	}
+};
+
+var System = {
+	core: {},
+	baseUrl: null,
+
+	resolveUrl: function(){
+		throw new Error('unimplemented resolveUrl()');
+	},
+
+	readFile: function(){
+		throw new Error('unimplemented readFile()');
+	},
+
+	eval: function(){
+		throw new Error('unimplemented eval()');
+	},
+
+	resolve: function(name){
+		return SystemLocation.resolve(this.baseUrl, name);
 	}
 };
 
@@ -155,15 +184,13 @@ var Module = {
 	dependencies: null, // module required by this one
 	dependents: null, // module requiring this one
 	cache: {},
-	resolvedIds: null, // contain id already resolved to uri for this module
-	extension: '.js', // default extension
+	urlCache: null, // contain cache of resolved urls
 
 	source: null, // module source as string
 	fn: null, // the module method
-	exports: null, // the value returned by module.fn()
-
-	vesion: null,
-	meta: null,
+	exports: null, // the value returned by fn()
+	meta: null, // maybe usefull a day
+	version: null, // will be supported later
 
 	constructor: function(filename){
 		if( filename in this.cache ){
@@ -172,7 +199,7 @@ var Module = {
 
 		this.filename = filename;
 		this.cache[filename] = this;
-		this.resolvedIds = {};
+		this.urlCache = {};
 
 		this.dependencies = [];
 		this.dependents = [];
@@ -243,12 +270,12 @@ var Module = {
 	resolve: function(name){
 		var url;
 
-		if( name in this.resolvedIds ){
-			url = this.resolvedIds[name];
+		if( name in this.urlCache ){
+			url = this.urlCache[name];
 		}
 		else{
-			url = System.resolve(this.filename, name);
-			this.resolvedIds[name] = url;
+			url = SystemLocation.resolve(this.filename, name);
+			this.urlCache[name] = url;
 		}
 
 		debug('resolving', name, 'to', url);
@@ -262,69 +289,55 @@ var Module = {
 		return dependencies;
 	},
 
-	ready: function(){
-		return Promise.pipe([
-			this.load,
-			this.scan,
-			this.createDependencies,
-			function(){
-				return Promise.map(this.dependencies, function(dependency){
-					return dependency.ready();
-				}, this);
-			}
-		], this);
-	},
-
 	compile: function(){
-		var code, fn;
-
-		debug('compile module function', this);
-
-		code = '(function(module, require){\n\n' + this.source + '\n\n})';
-
-		try{
-			fn = System.eval(code, this.filename);
-		}
-		catch(e){
-			// syntax/reference error in module source
-			throw e;
-		}
-
-		return this.fn = fn;
-	},
-
-	exec: function(){
 		var result;
 
-		debug('exec module', this);
-
-		try{
-			result = this.fn.call(System.global, this, this.require.bind(this));
+		if( this.hasOwnProperty('exports') ){
+			result = this.exports;
 		}
-		catch(e){
-			// execution of the module code raise an error
-			throw e;
+		else{
+			var code = '(function(module, require){\n\n' + this.source + '\n\n})', fn;
+
+			fn = System.eval(code, this.filename); // can throw syntax/reference error in module source
+			this.fn = fn;
+			result = fn.call(System.global, this, this.require.bind(this)); // can throw error too
+			this.exports = result;
+
+			// when a dependency is modified I may need to recall fn (without evaluating source)
+
+			debug(this, 'has returned', result);
 		}
 
-		debug('got the result', result);
-
-		return this.exports = result;
+		return result;
 	},
 
-	run: function(){
-		// dès que le module est prêt on peut l'éxécuter
-		return this.ready().then(function(){
-			this.compile();
-			return this.exec();
-		}.bind(this));
+	ready: function(){
+		var promise;
+
+		if( this.promise ){
+			promise = this.promise;
+		}
+		else{
+			promise = Promise.pipe([
+				this.load,
+				this.scan,
+				this.createDependencies,
+				function(){
+					return Promise.map(this.dependencies, function(dependency){
+						return dependency.ready();
+					}, this);
+				},
+				this.compile
+			], this);
+			this.promise = promise;
+		}
+
+		return promise;
 	},
 
 	require: function(name){
 		var url = this.resolve(name);
 		var module = this.cache[url];
-
-		module.compile();
-		module.exec();
 
 		return module.exports;
 	}
@@ -334,15 +347,15 @@ Module.constructor.prototype = Module;
 Module = Module.constructor;
 
 System.import = function(name){
-	var filename = System.resolve(System.baseUrl, name);
+	var filename = System.resolve(name);
 	var module = new Module(filename);
-	return module.run();
+	return module.ready();
 };
 
 System.define = function(name, source, options){
 	var module = new Module(name);
 	module.source = source;
-	return module.run();
+	return module.ready();
 };
 
 if( System.platform === 'node' && require.main === module ){
