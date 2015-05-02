@@ -5,15 +5,9 @@ https://github.com/joyent/node/blob/master/lib/module.js
 https://github.com/joyent/node/blob/master/src/node.js
 http://fredkschott.com/post/2014/06/require-and-the-module-system/?utm_source=nodeweekly&utm_medium=email
 
-comment aller chercher proto/index.js lorsque je tape 'proto' (a priori on devra l'indiquer)
-
 */
 
 var Ajax = require('./ajax');
-require('@dmail/promise');
-require('@dmail/promise/pipe');
-require('@dmail/promise/callback');
-require('@dmail/promise/map');
 var moduleScanner = require('./module-scanner');
 
 var SystemLocation = {
@@ -106,7 +100,6 @@ var System = {
 };
 
 System.core.ajax = Ajax;
-System.core.promise = Promise;
 System.core.moduleScanner = moduleScanner;
 
 // browser
@@ -118,15 +111,21 @@ if( typeof window !== 'undefined' ){
 		if( filename ) code+= '\n//# sourceURL=' + filename;
 		return window.eval(code);
 	};
-	System.readFile = function(scriptUrl){
+	System.readFile = function(scriptUrl, callback){
 		var url = 'resolve?path={path}';
 		url = url.replace('{path}', encodeURIComponent(scriptUrl));
 		url = window.location.origin + '/' + url;
 
-		return Promise.resolve(new Ajax({
+		var ajax = new Ajax({
 			method: 'get',
 			url: url
-		}));
+		});
+
+		ajax.then(function(error){
+			callback(error);
+		}, function(source){
+			callback(null, source);
+		});
 	};
 	System.resolveUrl = function(from, to){
 		var head = document.head;
@@ -148,12 +147,12 @@ if( typeof window !== 'undefined' ){
 else if( typeof process !== 'undefined' ){
 	System.platform = 'node';
 	System.global = global;
-	System.baseUrl = __filename; // process.cwd();
+	System.baseUrl = './';//__filename; // process.cwd();
 	// this.baseURL.replace(/\\/g, '/');
 
 	// node core modules
 	var natives = process.binding('natives');
-	for(var key in natives) System.core[key] = natives[key];
+	//for(var key in natives) System.define(key, natives[key]);
 
 	var vm = require('vm');
 	System.eval = function(code, filename){
@@ -162,10 +161,8 @@ else if( typeof process !== 'undefined' ){
 		});
 	};
 	var fs = require('fs');
-	System.readFile = function(filename){
-		return Promise.callback(function(complete){
-			fs.readFile(filename, complete);
-		});
+	System.readFile = function(filename, callback){
+		fs.readFile(filename, callback);
 	};
 	var URL = require('url');
 	System.resolveUrl = function(from, to){
@@ -304,8 +301,6 @@ var Module = {
 			this.exports = result;
 
 			// when a dependency is modified I may need to recall fn (without evaluating source)
-
-			debug(this, 'has returned', result);
 		}
 
 		return result;
@@ -352,17 +347,62 @@ System.import = function(name){
 	return module.ready();
 };
 
-System.define = function(name, source, options){
-	var module = new Module(name);
-	module.source = source;
+System.define = function(name, source){
+	var filename = System.resolve(name);
+	
+	if( filename in Module.cache ){
+		throw new Error('a module named ' + name + ' already exists');
+	}
+
+	var module = new Module(filename);
+	module.exports = exports;
 	return module.ready();
 };
 
 if( System.platform === 'node' && require.main === module ){
+	/*
 	System.import(process.argv[2]).then(console.log, function(e){
 		console.error(e.stack);
 	});
+	*/
 }
+
+// core module must be in the right dependency order
+var coreModules = [
+	'symbol',
+	'proto'
+];
+
+coreModules = coreModules.map(function(name){
+	var path = './core/' + name + '/index.js';
+	var module = new Module(path);
+
+	SystemLocation.paths[name] = path;
+
+	return module;
+});
+
+var loaded = 0;
+coreModules.forEach(function(module, index, array){
+	
+
+	System.readFile(module.filename, function(error, source){
+		if( error ) throw error;
+
+		console.log('got', module.filename, 'source');
+		module.source = source;
+
+		loaded++;
+
+		if( loaded === coreModules.length ){
+			coreModules.forEach(function(module){
+				module.compile();
+			});
+
+			console.log(Module.prototype.cache)
+		}
+	});
+});
 
 function shortenPath(filepath){
 	return require('path').relative(System.baseUrl, filepath);
@@ -383,6 +423,8 @@ function debug(){
 
 	console.log.apply(console, args);
 }
+
+setTimeout(function(){}, 100);
 
 module.exports = System;
 

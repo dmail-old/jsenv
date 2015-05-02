@@ -16,6 +16,9 @@ var Ajax = {
 	then: function(onResolve, onReject){
 		this.onResolve = onResolve;
 		this.onReject = onReject;
+		if( this.hasOwnProperty('status') ){
+			this.complete();
+		}
 	},
 
 	// https://gist.github.com/mmazer/5404301
@@ -69,7 +72,7 @@ var Ajax = {
 		for(;i<j;i++){
 			entry = cache[i];
 			if( this.isCached(entry.request) ){
-				this.status = entry.response.statusCode;
+				this.status = entry.response.status;
 				this.responseText = entry.response.body;
 				this.responseHeaders = entry.response.headers;
 				this.complete();
