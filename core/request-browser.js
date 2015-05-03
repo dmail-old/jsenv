@@ -11,15 +11,23 @@
 			this.method = options.method;
 			this.sync = options.sync;
 			this.body = options.body;
-			this.send();
+
+			this.promise = new Promise(function(resolve, reject){
+				this.resolve = resolve;
+				this.reject = reject;
+			}.bind(this));
+
+			this.send();			
+
+			return this;
 		},
 
 		then: function(onResolve, onReject){
-			this.onResolve = onResolve;
-			this.onReject = onReject;
-			if( this.hasOwnProperty('status') ){
-				this.complete();
-			}
+			return this.promise.then(onResolve, onReject);
+		},
+
+		catch: function(onReject){
+			return this.promise.catch(onReject);
 		},
 
 		// https://gist.github.com/mmazer/5404301
@@ -46,10 +54,10 @@
 
 		complete: function(){
 			if( this.status >= 200 || this.status < 400 ){
-				this.onResolve(this.responseText);
+				this.resolve(this.responseText);
 			}
 			else{
-				this.onReject();
+				this.reject();
 			}
 		},
 

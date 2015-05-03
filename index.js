@@ -10,6 +10,14 @@ System.requestFile could use exactly the same API
 and check if status is 404
 for local urls, it's our own server who is responding (99% of the time I suppose)
 
+pour browser les url interne pourraient essayer de trouver le fichier sur le filesystem
+puis essayer de les récup via une requête
+
+'file:./module.js' -> node, cherche sur le filesystem, browser cherche sur le filesystem sinon fallback sur xhr
+'http://module.js' -> node et browser, passe par une requête
+
+check url resolution at https://github.com/ModuleLoader/es6-module-loader/blob/master/src/system.js
+
 */
 
 var moduleScanner = require('./module-scanner');
@@ -54,12 +62,22 @@ var System = {
 		throw new Error('unimplemented resolveUrl()');
 	},
 
-	requestFile: function(){
-		throw new Error('unimplemented requestFile()');
+	fetchTextFromURL: function(){
+		throw new Error('unimplemented fetchTextFromURL()');
+	},
+
+	fetchTextFromFile: function(){
+		throw new Error('unimplemented fetchTextFromFile()');
 	},
 
 	eval: function(){
 		throw new Error('unimplemented eval()');
+	},
+
+	createModuleNotFoundError: function(filename){
+		var error = new Error('no module named' + filename + ' can be found');
+		error.code = 'MODULE_NOT_FOUND';
+		return error;
 	},
 
 	forceExtension: function(pathname, extension){
@@ -200,7 +218,18 @@ var Module = {
 			promise = Promise.resolve(this.source);
 		}
 		else{
-			promise = System.requestFile(this.filename);
+			var filename = this.filename;
+
+			// fetchTextFromFile()
+			if( filename.slice(0, 5) === 'file:' ){
+				filename = filename.slice(5);
+				promise = System.fetchTextFromFile(filename);
+			}
+			// fetchTextFromURl()
+			else{
+				promise = System.fetchTextFromURL(filename);
+			}
+			
 			promise = promise.then(function(source){
 				return this.source = source;
 			}.bind(this));
@@ -292,12 +321,6 @@ var Module = {
 		return promise;
 	},
 
-	createModuleNotFoundError: function(){
-		var error = new Error();
-		error.code = 'MODULE_NOT_FOUND';
-		return error;
-	},
-
 	require: function(name){
 		var url = this.locate(name), module;
 
@@ -327,13 +350,20 @@ if( typeof window !== 'undefined' ){
 		if( filename ) code+= '\n//# sourceURL=' + filename;
 		return window.eval(code);
 	};
-	System.requestFile = function(scriptUrl){
+	//System.fetchTextFromFile = function(filename){}; // use FileSystem API
+	System.fetchTextFromURL = function(scriptUrl){
 		var url = encodeURI(scriptUrl);
-
-		return Promise.resolve(new Request({
+		
+		var request = new Request({
 			method: 'get',
 			url: url
-		}));
+		});
+
+		return request.catch(function(error){
+			if( request.status == 404 ){
+				return this.createModuleNotFoundError(url);
+			}
+		}.bind(this));
 	};
 	System.resolveUrl = function(from, to){
 		var head = document.head;
@@ -355,7 +385,11 @@ if( typeof window !== 'undefined' ){
 else if( typeof process !== 'undefined' ){
 	System.platform = 'node';
 	System.global = global;
-	System.baseUrl = __filename; // process.cwd(); // this.baseURL.replace(/\\/g, '/');
+	System.baseUrl = 'file:' + process.cwd() + '/';
+
+	if( process.platform.match(/^win/) ){
+		System.baseUrl = System.baseUrl.replace(/\\/g, '/');
+	}
 
 	// node core modules
 	//var natives = process.binding('natives');
@@ -374,14 +408,19 @@ else if( typeof process !== 'undefined' ){
 		});
 	};
 	var fs = require('fs');
-	System.requestFile = function(filename, callback){
+	System.fetchTextFromFile = function(filename, callback){
 		return new Promise(function(resolve, reject){
 			fs.readFile(filename, function(error, source){
 				if( error ) reject(error);
 				else resolve(source);
 			});
-		});	
+		}).catch(function(error){
+			if( error && error.code == 'ENOENT' ){
+				return this.createModuleNotFoundError(filename);
+			}
+		}.bind(this));
 	};
+	// System.fetchTextFromUrl = function(){}; // use httpRequest
 	var URL = require('url');
 	System.resolveUrl = function(from, to){
 		return URL.resolve(from, to);
