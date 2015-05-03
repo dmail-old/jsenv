@@ -1,37 +1,72 @@
-/*
+/* globals Request */
 
+/*
 inspiration:
 https://github.com/joyent/node/blob/master/lib/module.js
 https://github.com/joyent/node/blob/master/src/node.js
 http://fredkschott.com/post/2014/06/require-and-the-module-system/?utm_source=nodeweekly&utm_medium=email
 
+System.requestFile could use exactly the same API
+and check if status is 404
+for local urls, it's our own server who is responding (99% of the time I suppose)
+
 */
 
-var Ajax = require('./ajax');
 var moduleScanner = require('./module-scanner');
 
-var SystemLocation = {
+function shortenPath(filepath){
+	return require('path').relative(System.baseUrl, filepath);
+}
+
+function debug(){
+	var args = Array.prototype.slice.call(arguments);
+
+	args = args.map(function(arg){
+		if( arg instanceof Module ){
+			arg = shortenPath(arg.filename);
+		}
+		else if( String(arg).match(/\\|\//) ){
+			arg = shortenPath(arg);
+		}
+		return arg;
+	});
+
+	console.log.apply(console, args);
+}
+
+var System = {
+	platform: 'unknown',
+	global: null,
+	baseUrl: null,
 	extension: '.js',
 	paths: {},
+	dependencies: [
+		'symbol', // because required by iterator
+		'iterator', // because required by promise
+		'promise', // because it's amazing
+		// 'request', // pour browser c'est xmlhttprequest, pour node c'est un module qui fait une requête 
+		// puisque le module peut très bien dire require('http://google.fr/api.js') 
+		// ou alors require('./') mais ce sera résolu par le filesystem
+		// https://github.com/kriszyp/nodules/blob/master/lib/nodules-utils/node-http-client.js
+	],
+
+	resolveUrl: function(){
+		throw new Error('unimplemented resolveUrl()');
+	},
+
+	requestFile: function(){
+		throw new Error('unimplemented requestFile()');
+	},
+
+	eval: function(){
+		throw new Error('unimplemented eval()');
+	},
 
 	forceExtension: function(pathname, extension){
 		if( pathname.slice(-(extension.length)) != extension ){
 			pathname+= extension;
 		}
 		return pathname;
-	},
-
-	resolve: function(base, uri){
-		var url = System.resolveUrl(base, uri), queryIndex = url.indexOf('?');
-
-		if( queryIndex != -1 ){
-			url = this.forceExtension(url.slice(0, queryIndex), this.extension) + url.slice(queryIndex);
-		}
-		else{
-			url = this.forceExtension(url, this.extension);
-		}
-
-		return url;
 	},
 
 	/*
@@ -63,7 +98,7 @@ var SystemLocation = {
 
 	locate: function(base, name){
 		// most specific (longest) match wins
-		var paths = this.paths, location = '', path, match;
+		var paths = this.paths, location = name, path, match;
 
 		// check to see if we have a paths entry
 		for( path in paths ){
@@ -74,107 +109,35 @@ var SystemLocation = {
 			}
 		}
 
-		return this.resolve(base, location);
-	}
-};
-
-var System = {
-	core: {},
-	baseUrl: null,
-
-	resolveUrl: function(){
-		throw new Error('unimplemented resolveUrl()');
-	},
-
-	readFile: function(){
-		throw new Error('unimplemented readFile()');
-	},
-
-	eval: function(){
-		throw new Error('unimplemented eval()');
-	},
-
-	resolve: function(name){
-		return SystemLocation.resolve(this.baseUrl, name);
-	}
-};
-
-System.core.ajax = Ajax;
-System.core.moduleScanner = moduleScanner;
-
-// browser
-if( typeof window !== 'undefined' ){
-	System.platform = 'browser'; // or 'navigator'
-	System.global = window;
-	System.baseUrl = '.' + window.location.pathname;
-	System.eval = function(code, filename){
-		if( filename ) code+= '\n//# sourceURL=' + filename;
-		return window.eval(code);
-	};
-	System.readFile = function(scriptUrl, callback){
-		var url = 'resolve?path={path}';
-		url = url.replace('{path}', encodeURIComponent(scriptUrl));
-		url = window.location.origin + '/' + url;
-
-		var ajax = new Ajax({
-			method: 'get',
-			url: url
-		});
-
-		ajax.then(function(error){
-			callback(error);
-		}, function(source){
-			callback(null, source);
-		});
-	};
-	System.resolveUrl = function(from, to){
-		var head = document.head;
-		var base = document.createElement('base');
-		var a = document.createElement('a');
-		var url;
-
-		head.insertBefore(base, head.firstChild);
-		base.href = from;
-		a.href = to;
-		url = a.href;
-
-		head.removeChild(base);
+		var url = System.resolveUrl(base, location), queryIndex = url.indexOf('?');
+		if( queryIndex != -1 ){
+			url = this.forceExtension(url.slice(0, queryIndex), this.extension) + url.slice(queryIndex);
+		}
+		else{
+			url = this.forceExtension(url, this.extension);
+		}
 
 		return url;
-	};
-}
-// node
-else if( typeof process !== 'undefined' ){
-	System.platform = 'node';
-	System.global = global;
-	System.baseUrl = './';//__filename; // process.cwd();
-	// this.baseURL.replace(/\\/g, '/');
+	},
 
-	// node core modules
-	var natives = process.binding('natives');
-	//for(var key in natives) System.define(key, natives[key]);
+	import: function(name){
+		var filename = System.locate(System.baseUrl, name);
+		var module = new Module(filename);
+		return module.ready();
+	},
 
-	var vm = require('vm');
-	System.eval = function(code, filename){
-		return vm.runInThisContext(code, {
-			filename: filename
-		});
-	};
-	var fs = require('fs');
-	System.readFile = function(filename, callback){
-		fs.readFile(filename, callback);
-	};
-	var URL = require('url');
-	System.resolveUrl = function(from, to){
-		return URL.resolve(from, to);
-	};
-}
-// other js envs
-else{
-	throw new Error('your javascript environment in not supported');
-}
+	define: function(name, source){
+		var filename = System.locate(System.baseUrl, name);
+		
+		if( filename in Module.cache ){
+			throw new Error('a module named ' + name + ' already exists');
+		}
 
-System.global.System = System;
+		var module = new Module(filename);
+		module.exports = exports;
+		return module.ready();
+	}
+};
 
 var Module = {
 	filename: null, // resolved filename
@@ -237,7 +200,7 @@ var Module = {
 			promise = Promise.resolve(this.source);
 		}
 		else{
-			promise = System.readFile(this.filename);
+			promise = System.requestFile(this.filename);
 			promise = promise.then(function(source){
 				return this.source = source;
 			}.bind(this));
@@ -264,14 +227,14 @@ var Module = {
 		return dependencyNames;
 	},
 
-	resolve: function(name){
+	locate: function(name){
 		var url;
 
 		if( name in this.urlCache ){
 			url = this.urlCache[name];
 		}
 		else{
-			url = SystemLocation.resolve(this.filename, name);
+			url = System.locate(this.filename, name);
 			this.urlCache[name] = url;
 		}
 
@@ -281,7 +244,7 @@ var Module = {
 	},
 
 	createDependencies: function(){
-		var dependencyPaths = this.dependencyNames.map(this.resolve, this);
+		var dependencyPaths = this.dependencyNames.map(this.locate, this);
 		var dependencies = dependencyPaths.map(this.createDependency, this);
 		return dependencies;
 	},
@@ -313,26 +276,40 @@ var Module = {
 			promise = this.promise;
 		}
 		else{
-			promise = Promise.pipe([
-				this.load,
-				this.scan,
-				this.createDependencies,
-				function(){
-					return Promise.map(this.dependencies, function(dependency){
-						return dependency.ready();
-					}, this);
-				},
-				this.compile
-			], this);
+			promise = this.load().then(function(){
+				this.scan();
+				this.createDependencies();
+				return Promise.all(this.dependencies.map(function(dependency){
+					return dependency.ready();
+				}));
+			}.bind(this)).then(function(){
+				return this.compile();
+			}.bind(this));
+
 			this.promise = promise;
 		}
 
 		return promise;
 	},
 
+	createModuleNotFoundError: function(){
+		var error = new Error();
+		error.code = 'MODULE_NOT_FOUND';
+		return error;
+	},
+
 	require: function(name){
-		var url = this.resolve(name);
-		var module = this.cache[url];
+		var url = this.locate(name), module;
+
+		if( !(url in this.cache) ){
+			throw new Error(url + ' module was not preloaded');
+		}
+
+		module = this.cache[url];
+
+		if( !module.hasOwnProperty('exports') ){
+			throw new Error(name + 'module exports is null');
+		}
 
 		return module.exports;
 	}
@@ -341,121 +318,92 @@ var Module = {
 Module.constructor.prototype = Module;
 Module = Module.constructor;
 
-System.import = function(name){
-	var filename = System.resolve(name);
-	var module = new Module(filename);
-	return module.ready();
-};
+// browser
+if( typeof window !== 'undefined' ){
+	System.platform = 'browser';
+	System.global = window;
+	System.baseUrl = window.location.origin;
+	System.eval = function(code, filename){
+		if( filename ) code+= '\n//# sourceURL=' + filename;
+		return window.eval(code);
+	};
+	System.requestFile = function(scriptUrl){
+		var url = encodeURI(scriptUrl);
 
-System.define = function(name, source){
-	var filename = System.resolve(name);
-	
-	if( filename in Module.cache ){
-		throw new Error('a module named ' + name + ' already exists');
+		return Promise.resolve(new Request({
+			method: 'get',
+			url: url
+		}));
+	};
+	System.resolveUrl = function(from, to){
+		var head = document.head;
+		var base = document.createElement('base');
+		var a = document.createElement('a');
+		var url;
+
+		head.insertBefore(base, head.firstChild);
+		base.href = from;
+		a.href = to;
+		url = a.href;
+
+		head.removeChild(base);
+
+		return url;
+	};
+}
+// node
+else if( typeof process !== 'undefined' ){
+	System.platform = 'node';
+	System.global = global;
+	System.baseUrl = __filename; // process.cwd(); // this.baseURL.replace(/\\/g, '/');
+
+	// node core modules
+	//var natives = process.binding('natives');
+	//for(var key in natives) System.define(key, natives[key]);
+
+	// in node env, just require the dependencies
+	// (browser env must include script tag with the dependencies prior to including system.js)
+	System.dependencies.forEach(function(dependency){
+		require('./core/' + dependency + '.js');
+	});
+
+	var vm = require('vm');
+	System.eval = function(code, filename){
+		return vm.runInThisContext(code, {
+			filename: filename
+		});
+	};
+	var fs = require('fs');
+	System.requestFile = function(filename, callback){
+		return new Promise(function(resolve, reject){
+			fs.readFile(filename, function(error, source){
+				if( error ) reject(error);
+				else resolve(source);
+			});
+		});	
+	};
+	var URL = require('url');
+	System.resolveUrl = function(from, to){
+		return URL.resolve(from, to);
+	};
+}
+// other js envs
+else{
+	throw new Error('your javascript environment in not supported');
+}
+
+System.dependencies.forEach(function(dependency){
+	var dependencyName = dependency[0].toUpperCase() + dependency.slice(1);
+
+	if( !(dependencyName in System.global) ){
+		throw new Error('system is dependent of ' + dependencyName + ' but it cannot find it in the global env');
 	}
+});
 
-	var module = new Module(filename);
-	module.exports = exports;
-	return module.ready();
-};
+System.global.System = System;
 
 if( System.platform === 'node' && require.main === module ){
-	/*
 	System.import(process.argv[2]).then(console.log, function(e){
 		console.error(e.stack);
 	});
-	*/
 }
-
-// core module must be in the right dependency order
-var coreModules = [
-	'symbol',
-	'proto'
-];
-
-coreModules = coreModules.map(function(name){
-	var path = './core/' + name + '/index.js';
-	var module = new Module(path);
-
-	SystemLocation.paths[name] = path;
-
-	return module;
-});
-
-var loaded = 0;
-coreModules.forEach(function(module, index, array){
-	
-
-	System.readFile(module.filename, function(error, source){
-		if( error ) throw error;
-
-		console.log('got', module.filename, 'source');
-		module.source = source;
-
-		loaded++;
-
-		if( loaded === coreModules.length ){
-			coreModules.forEach(function(module){
-				module.compile();
-			});
-
-			console.log(Module.prototype.cache)
-		}
-	});
-});
-
-function shortenPath(filepath){
-	return require('path').relative(System.baseUrl, filepath);
-}
-
-function debug(){
-	var args = Array.prototype.slice.call(arguments);
-
-	args = args.map(function(arg){
-		if( arg instanceof Module ){
-			arg = shortenPath(arg.filename);
-		}
-		else if( String(arg).match(/\\|\//) ){
-			arg = shortenPath(arg);
-		}
-		return arg;
-	});
-
-	console.log.apply(console, args);
-}
-
-setTimeout(function(){}, 100);
-
-module.exports = System;
-
-/*
-System.parseUrl = function(url){
-	return URL.parse(url);
-};
-System.formatUrl = function(url){
-	return URL.format(url);
-};
-
-System.parseUrl = function(url){
-	var a = document.createElement('a');
-	a.href = url;
-	return {
-		href: url,
-		protocol: a.protocol.replace(':',''),
-		slashes: true, // todo,
-		host: a.hostname,
-		auth: '', // todo
-		hostname: a.hostname.toLowerCase(),
-		port: a.port,
-		pathname: a.pathname,
-		search: a.search,
-		path: a.pathname + a.search,
-		query: a.search.slice(1),
-		hash: a.hash.replace('#','')
-	};
-};
-
-System.formatUrl = function(properties){
-		return properties.protocal + properties.host + properties.pathname + properties.search + properties.hash;
-};
-*/
