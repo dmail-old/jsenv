@@ -1,16 +1,14 @@
 {
-	"name": "@dmail/system",
+	"name": "@dmail/env",
 	"version": "0.0.1",
 	"dependencies": {
 		"@dmail/symbol": "../@dmail/symbol",
 		"@dmail/promise": "../@dmail/promise",
 		"@dmail/iterator": "../@dmail/iterator",
-		"@dmail/for-of": "../@dmail/for-of",
-		"@dmail/proto": "../@dmail/proto",
-		"@dmail/object": "../@dmail/object"
+		"@dmail/for-of": "../@dmail/for-of"
 	},
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/dmail/system"
-	},
+		"url": "https://github.com/dmail/env"
+	}
 }
