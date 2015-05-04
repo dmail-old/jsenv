@@ -94,7 +94,7 @@ function toAbsoluteURL(base, href){
 			removeDotSegments(
 				href.protocol || href.authority || href.pathname.charAt(0) === '/' ? href.pathname : (href.pathname ? ((base.authority && !base.pathname ? '/' : '') + base.pathname.slice(0, base.pathname.lastIndexOf('/') + 1) + href.pathname) : base.pathname)
 			),
-			'.js'
+			ENV.extension
 		)+
 		(href.protocol || href.authority || href.pathname ? href.search : (href.search || base.search)) +
 		href.hash;
@@ -108,11 +108,10 @@ var ENV = {
 	platforms: [],
 	globalName: 'ENV',
 	global: null,
+	protocols: {},
 	baseUrl: null,
 	extension: '.js',
 	paths: {},
-	protocols: {},
-	implementations: [],
 	dependencies: [
 		'symbol', // because required by iterator
 		'iterator', // because required by promise
@@ -134,16 +133,19 @@ var ENV = {
 		}
 
 		this.platform = platform.name;
-		this.global = platform.getGlobal();
+		this.global = platform.getGlobal(); // mandatory
 		this.global[this.globalName] = this;
-		this.baseUrl = platform.getBaseUrl();
 
-		var protocols = platform.getSupportedProtocols();
-		if( protocols ){
-			for(var key in protocols ) this.protocols[key] = protocols[key];
+		if( platform.getSupportedProtocols ){ // optionnal
+			var protocols = platform.getSupportedProtocols();
+			if( protocols ){
+				for(var key in protocols ) this.protocols[key] = protocols[key];
+			}
 		}
 
-		if( platform.setup ){
+		this.baseUrl = platform.getBaseUrl(); // mandatory
+
+		if( platform.setup ){ // optionnal
 			platform.setup.call(this);
 		}
 
@@ -155,7 +157,7 @@ var ENV = {
 			}
 		}, this);
 
-		if( platform.init ){
+		if( platform.init ){ // optionnal
 			platform.init.call(this);
 		}
 	},
