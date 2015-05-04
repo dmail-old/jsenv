@@ -105,27 +105,63 @@ function toAbsoluteURL(base, href){
 
 var ENV = {
 	platform: 'unknown',
+	platforms: [],
+	globalName: 'ENV',
 	global: null,
 	baseUrl: null,
 	extension: '.js',
 	paths: {},
 	protocols: {},
+	implementations: [],
 	dependencies: [
 		'symbol', // because required by iterator
 		'iterator', // because required by promise
-		'promise', // because it's amazing
-		// 'request', // pour browser c'est xmlhttprequest, pour node c'est un module qui fait une requête
-		// puisque le module peut très bien dire require('http://google.fr/api.js')
-		// ou alors require('./') mais ce sera résolu par le filesystem
-		// https://github.com/kriszyp/nodules/blob/master/lib/nodules-utils/node-http-client.js
+		'promise' // because it's amazing
 	],
 
-	fetchTextFromURL: function(){
-		throw new Error('unimplemented fetchTextFromURL()');
+	init: function(){
+		var platforms = this.platforms, i = 0, j = platforms.length, platform;
+
+		for(;i<j;i++){
+			platform = platforms[i];
+			if( platform.test.call(this) ){
+				break;
+			}
+		}
+
+		if( !platform ){
+			throw new Error('your javascript environment in not supported');
+		}
+
+		this.platform = platform.name;
+		this.global = platform.getGlobal();
+		this.global[this.globalName] = this;
+		this.baseUrl = platform.getBaseUrl();
+
+		var protocols = platform.getSupportedProtocols();
+		if( protocols ){
+			for(var key in protocols ) this.protocols[key] = protocols[key];
+		}
+
+		if( platform.setup ){
+			platform.setup.call(this);
+		}
+
+		this.dependencies.forEach(function(dependency){
+			var dependencyName = dependency[0].toUpperCase() + dependency.slice(1);
+
+			if( !(dependencyName in this.global) ){
+				throw new Error('system is dependent of ' + dependencyName + ' but it cannot find it in the global env');
+			}
+		}, this);
+
+		if( platform.init ){
+			platform.init.call(this);
+		}
 	},
 
-	fetchTextFromFile: function(){
-		throw new Error('unimplemented fetchTextFromFile()');
+	add: function(platform){
+		this.platforms.push(platform);
 	},
 
 	eval: function(code, location){
@@ -160,7 +196,7 @@ var ENV = {
 		return location;
 	},
 
-	locate: function(base, name){
+	locateFrom: function(base, name){
 		// most specific (longest) match wins
 		var paths = this.paths, location = name, path, match;
 
@@ -178,14 +214,18 @@ var ENV = {
 		return url;
 	},
 
+	locate: function(name){
+		return this.locateFrom(this.baseUrl, name);
+	},
+
 	import: function(name){
-		var location = ENV.locate(ENV.baseUrl, name);
+		var location = ENV.locate(name);
 		var module = new Module(location);
 		return module.ready();
 	},
 
 	define: function(name, source){
-		var location = ENV.locate(ENV.baseUrl, name);
+		var location = ENV.locate(name);
 
 		if( location in Module.cache ){
 			throw new Error('a module named ' + name + ' already exists');
@@ -312,7 +352,7 @@ var Module = {
 			url = this.urlCache[name];
 		}
 		else{
-			url = ENV.locate(this.location, name);
+			url = ENV.locateFrom(this.location, name);
 			this.urlCache[name] = url;
 		}
 
@@ -390,204 +430,198 @@ var Module = {
 Module.constructor.prototype = Module;
 Module = Module.constructor;
 
-// https://gist.github.com/mmazer/5404301
-function parseHeaders(headerString){
-	var headers = {}, pairs, pair, index, i, j, key, value;
-
-	if( headerString ){
-		pairs = headerString.split('\u000d\u000a');
-		i = 0;
-		j = pairs.length;
-		for(;i<j;i++){
-			pair = pairs[i];
-			index = pair.indexOf('\u003a\u0020');
-			if( index > 0 ){
-				key = pair.slice(0, index);
-				value = pair.slice(index + 2);
-				headers[key] = value;
-			}
-		}
-	}
-
-	return headers;
-}
-
 // browser
-if( typeof window !== 'undefined' ){
-	ENV.platform = 'browser';
-	ENV.global = window;
+ENV.add({
+	name: 'browser',
 
-	var href = window.location.href.split('#')[0].split('?')[0];
-    ENV.baseURL = href.slice(0, href.lastIndexOf('/') + 1);
+	test: function(){
+		return typeof window !== 'undefined';
+	},
 
-    ENV.protocols.http =  ENV.protocols.https = function(url){
-		return new Promise(function(resolve, reject){
-			var xhr = new XMLHttpRequest();
+	getGlobal: function(){
+		return window;
+	},
 
-			xhr.onreadystatechange = function () {
-				if( xhr.readyState === 4 ){
-					resolve({
-						status: xhr.status,
-						body: xhr.responseText,
-						headers: parseHeaders(xhr.getAllResponseHeaders())
-					});
+	getBaseUrl: function(){
+		var href = window.location.href.split('#')[0].split('?')[0];
+		var baseUrl = href.slice(0, href.lastIndexOf('/') + 1);
+
+		return baseUrl;
+	},
+
+	getSupportedProtocols: function(){
+		var protocols = {};
+
+		// https://gist.github.com/mmazer/5404301
+		function parseHeaders(headerString){
+			var headers = {}, pairs, pair, index, i, j, key, value;
+
+			if( headerString ){
+				pairs = headerString.split('\u000d\u000a');
+				i = 0;
+				j = pairs.length;
+				for(;i<j;i++){
+					pair = pairs[i];
+					index = pair.indexOf('\u003a\u0020');
+					if( index > 0 ){
+						key = pair.slice(0, index);
+						value = pair.slice(index + 2);
+						headers[key] = value;
+					}
 				}
-			};
-	     	xhr.open('GET', url);
-	     	xhr.send(null);
-	   });
-    };
-
-    ENV.protocols.file = function(url){
-    	return  ENV.protocols.http(url).then(function(response){
-			// fix for browsers returning status == 0 for local file request
-			if( response.status === 0 ){
-				response.status = response.body ? 200 : 404;
 			}
-			return response;
-		});
-    };
 
-	/*
-	not needed, ENV.protocol.http works with local files
-	ENV.protocols.file = function(path){
-		if( !window.requestFileSystem ){
-			throw new Error('requestFileSystem is not supported');
+			return headers;
 		}
 
-		return new Promise(function(resolve, reject){
-			window.requestFileSystem(window.PERSISTENT, 1024*1024, resolve, reject); // reject is SECURITY_ERROR
-		}).then(function(fs){
-			return new Promise(function(resolve, reject){
-				fs.root.getFile(path, {}, resolve, reject);
-			});
-		}).then(function(fileEntry){
-			return new Promise(function(resolve){
-				fileEntry.file(resolve);
-			});
-		}).then(function(file){
-			return new Promise(function(resolve, reject){
-				var reader = new FileReader();
+		protocols.http = function(url){
+   			return new Promise(function(resolve, reject){
+				var xhr = new XMLHttpRequest();
 
-				reader.onloadend = function(e){
-					resolve({
-						status: 200,
-						responseText: reader.result,
-						headers: {}
-					});
-				};
-
-				reader.readAsText(file);
-			});
-		});
-	};
-	*/
-}
-// node
-else if( typeof process !== 'undefined' ){
-	ENV.platform = 'node';
-	ENV.global = global;
-	ENV.baseUrl = 'file://' + __dirname + '/';
-
-	if( process.platform.match(/^win/) ){
-		ENV.baseUrl = ENV.baseUrl.replace(/\\/g, '/');
-	}
-
-	// node core modules
-	//var natives = process.binding('natives');
-	//for(var key in natives) System.define(key, natives[key]);
-
-	// in node env, just require the dependencies
-	// (browser env must include script tag with the dependencies prior to including system.js)
-	ENV.dependencies.forEach(function(dependency){
-		require('./core/' + dependency + '.js');
-	});
-
-	var fs = require('fs');
-	ENV.protocols.file = function(path){
-		path = path.slice('file://'.length);
-
-		return new Promise(function(resolve, reject){
-			fs.readFile(path, function(error, source){
-				if( error ){
-					if( error.code == 'ENOENT' ){
+				xhr.onreadystatechange = function () {
+					if( xhr.readyState === 4 ){
 						resolve({
-							status: 404,
+							status: xhr.status,
+							body: xhr.responseText,
+							headers: parseHeaders(xhr.getAllResponseHeaders())
 						});
 					}
-					else{
-						reject(error);
-					}
-				}
-				else{
-					resolve({
-						status: 200,
-						body: source,
-						headers: {}
-					});
-				}
-			});
-		});
-	};
-
-	var http = require('http');
-	var https = require('https');
-	ENV.protocols.http = function(url, isHttps){
-		return new Promise(function(resolve, reject){
-			var httpRequest = (isHttps ? https : http).request({
-				method: 'GET',
-				url: url,
-				port: isHttps ? 443 : 80
-			});
-
-			function resolveWithHttpResponse(httpResponse){
-				var response = {
-					status: httpResponse.statusCode,
-					headers: httpResponse.headers
 				};
+		     	xhr.open('GET', url);
+		     	xhr.send(null);
+		   });
+   		};
+   		protocols.https = protocols.http;
+   		protocols.file = function(url){
+   			return protocols.http(url).then(function(response){
+				// fix for browsers returning status == 0 for local file request
+				if( response.status === 0 ){
+					response.status = response.body ? 200 : 404;
+				}
+				return response;
+			});
+   		};
 
-				var buffers = [], length;
-				httpResponse.addListener('data', function(chunk){
-					buffers.push(chunk);
-					length+= chunk.length;
-				});
-				httpResponse.addListener('end', function(){
-					resolve({
-						status: httpResponse.statusCode,
-						headers: httpResponse.headers,
-						body: Buffer.concat(buffers, length).toString()
-					});
-				});
-				response.addListener('error', reject);
-			}
-
-			httpRequest.addListener('response', resolveWithHttpResponse);
-			httpRequest.addListener('error', reject);
-			httpRequest.addListener('timeout', reject);
-			httpRequest.addListener('close', reject);
-		});
-	};
-	ENV.protocols.https = function(url){
-		return ENV.protocols.http(url, true);
-	};
-}
-// other js envs
-else{
-	throw new Error('your javascript environment in not supported');
-}
-
-ENV.dependencies.forEach(function(dependency){
-	var dependencyName = dependency[0].toUpperCase() + dependency.slice(1);
-
-	if( !(dependencyName in ENV.global) ){
-		throw new Error('system is dependent of ' + dependencyName + ' but it cannot find it in the global env');
+   		return protocols;
 	}
 });
 
-ENV.global.ENV = ENV;
+// node
+ENV.add({
+	name: 'node',
 
-if( ENV.platform === 'node' && require.main === module ){
-	ENV.import(process.argv[2]).then(console.log, function(e){
-		console.error(e.stack);
-	});
-}
+	test: function(){
+		return typeof process !== 'undefined';
+	},
+
+	getGlobal: function(){
+		return global;
+	},
+
+	getBaseUrl: function(){
+		var baseUrl = 'file://' + __dirname + '/';
+
+		if( process.platform.match(/^win/) ){
+			baseUrl = baseUrl.replace(/\\/g, '/');
+		}
+
+		return baseUrl;
+	},
+
+	getSupportedProtocols: function(){
+		var http = require('http');
+		var https = require('https');
+
+		var protocols = {};
+
+		protocols.http = function(url, isHttps){
+			return new Promise(function(resolve, reject){
+				var httpRequest = (isHttps ? https : http).request({
+					method: 'GET',
+					url: url,
+					port: isHttps ? 443 : 80
+				});
+
+				function resolveWithHttpResponse(httpResponse){
+					var response = {
+						status: httpResponse.statusCode,
+						headers: httpResponse.headers
+					};
+
+					var buffers = [], length;
+					httpResponse.addListener('data', function(chunk){
+						buffers.push(chunk);
+						length+= chunk.length;
+					});
+					httpResponse.addListener('end', function(){
+						resolve({
+							status: httpResponse.statusCode,
+							headers: httpResponse.headers,
+							body: Buffer.concat(buffers, length).toString()
+						});
+					});
+					response.addListener('error', reject);
+				}
+
+				httpRequest.addListener('response', resolveWithHttpResponse);
+				httpRequest.addListener('error', reject);
+				httpRequest.addListener('timeout', reject);
+				httpRequest.addListener('close', reject);
+			});
+		};
+		protocols.https = function(url){
+			return protocols.http(url, true);
+		};
+
+		var fs = require('fs');
+		protocols.file = function(path){
+			path = path.slice('file://'.length);
+
+			return new Promise(function(resolve, reject){
+				fs.readFile(path, function(error, source){
+					if( error ){
+						if( error.code == 'ENOENT' ){
+							resolve({
+								status: 404,
+							});
+						}
+						else{
+							reject(error);
+						}
+					}
+					else{
+						resolve({
+							status: 200,
+							body: source,
+							headers: {}
+						});
+					}
+				});
+			});
+		};
+
+		return protocols;
+	},
+
+	setup: function(){
+		// node core modules
+		//var natives = process.binding('natives');
+		//for(var key in natives) System.define(key, natives[key]);
+
+		// in node env, just require the dependencies
+		// (browser env must include script tag with the dependencies prior to including system.js)
+		this.dependencies.forEach(function(dependency){
+			require('./core/' + dependency + '.js');
+		});
+	},
+
+	init: function(){
+		if( require.main === module ){
+			this.import(process.argv[2]).then(console.log, function(e){
+				console.error(e.stack);
+			});
+		}
+	}
+});
+
+ENV.init();
