@@ -433,6 +433,8 @@ Module.constructor.prototype = Module;
 Module = Module.constructor;
 
 // https://github.com/ModuleLoader/es6-module-loader/blob/master/src/loader.js#L885
+// https://gist.github.com/dherman/7568080
+// https://github.com/ModuleLoader/es6-module-loader/wiki/Extending-the-ES6-Loader
 var Loader = {
 	loads: null, // list of load record
 	modules: null, // module registry
