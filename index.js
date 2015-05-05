@@ -432,6 +432,100 @@ var Module = {
 Module.constructor.prototype = Module;
 Module = Module.constructor;
 
+// https://github.com/ModuleLoader/es6-module-loader/blob/master/src/loader.js#L885
+var Loader = {
+	loads: null, // list of load record
+	modules: null, // module registry
+
+	constructor: function(options){
+		if( options ){
+			if( options.normalize ) this.normalize = options.normalize;
+			if( options.locate ) this.locate = options.locate;
+			if( options.fetch ) this.fetch = options.fetch;
+			if( options.translate ) this.translate = options.translate;
+			if( options.instantiate ) this.instantiate = options.instantiate;
+		}
+
+		this.loads = {};
+		this.modules = {};
+	},
+
+	define: function(name, source){},
+	load: function(request){},
+	module: function(source){},
+	import: function(name){},
+	eval: function(source){},
+
+	get: function(name){
+		if( this.has(name) ){
+			// TODO: ensure the module is evaluated
+
+			return this.modules[name].module;
+		}
+		return null;
+	},
+	has: function(name){
+		return name in this.modules;
+	},
+	set: function(name, module){
+		if( (module instanceof Module) ){
+			throw new TypeError('Loader.set(' + name + ', module) must be a module');
+		}
+
+		this.modules[name] = {
+			module: module
+		};
+	},
+	delete: function(name){
+		// todo, delete when being loaded
+		if( this.has(name) ){
+			delete this.modules[name];
+			return true;
+		}
+		return false;
+	},
+
+	entries: function(){ return Iterator(this.modules, 'key+value'); },
+	keys: function(){ return Iterator(this.modules, 'key'); },
+	values: function(){ return Iterator(this.modules, 'value'); },
+
+	normalize: function(name, contextName, contextLocation){
+		return name;
+	},
+
+	locate: function(load){
+		return load.name;
+	},
+
+	fetch: function(load){
+		throw new TypeError('fetch not implemented');
+	},
+
+	translate: function(load){
+		return load.source;
+	},
+
+	instantiate: function(){
+
+	}
+};
+
+// object representing an attempt to locate/fetch/translate/parse a module
+var Load = {
+	status: null, // loading, loaded, linked, failed
+	name: null, // the normalized module name
+	meta: null,
+	location: null, // result of locate()
+	source: null, // result of translate()
+	body: null, // resolt of fetch()
+	exception: null, // why the load failed
+	module: null, // module produced by this load
+
+	constructor: function(name){
+		this.name = name;
+	}
+};
+
 // browser
 ENV.add({
 	name: 'browser',
