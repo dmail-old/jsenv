@@ -1,5 +1,3 @@
-/* globals Request */
-
 /*
 
 inspiration:
@@ -7,9 +5,11 @@ inspiration:
 https://github.com/kriszyp/nodules
 https://github.com/ModuleLoader/es6-module-loader/blob/master/src/system.js
 
-*/
+https://github.com/ModuleLoader/es6-module-loader/blob/master/src/loader.js#L885
+https://gist.github.com/dherman/7568080
+https://github.com/ModuleLoader/es6-module-loader/wiki/Extending-the-ES6-Loader
 
-var moduleScanner = require('./module-scanner');
+*/
 
 function shortenPath(filepath){
 	return require('path').relative(ENV.baseUrl, filepath);
@@ -30,6 +30,373 @@ function debug(){
 
 	console.log.apply(console, args);
 }
+
+// object representing an attempt to locate/fetch/translate/parse a module
+var Module = {
+	loader: null, // loader used to load this module
+	status: null, // loading, loaded, executed, failed
+	meta: null,
+	name: undefined, // the normalized module name, can be undefined for anonymous modules
+
+	address: null, // result of locate()
+	body: null, // result of fetch()
+	source: null, // result of translate()
+	dependencies: null, // result of collectDependencies()
+	parsed: null, // result of parse()
+	value: undefined, // result of execute()
+
+	dependents: null, // set from dependencies
+
+	exception: null, // why fetch() failed
+	promise: null, // the promise representing the attempt to load the module
+
+	constructor: function(loader, normalizedName){
+		var module;
+
+		if( normalizedName && loader.has(normalizedName) ){
+			module = loader.get(normalizedName);
+		}
+		// create a load
+		else{
+			module = this;
+			module.loader = loader;
+			module.status = 'loading';
+			module.meta = {};
+			module.dependencies = [];
+			module.dependents = [];
+
+			if( normalizedName ){
+				module.name = normalizedName;
+				loader.modules[normalizedName] = module;
+			}
+		}
+
+		return module;
+	},
+
+	toString: function(){
+		return '[Module '+ this.name +']';
+	},
+
+	locate: function(){
+		this.step = 'locate';
+
+		var promise;
+
+		if( this.hasOwnProperty('address') ){
+			promise = Promise.resolve(this.address);
+		}
+		else{
+			promise = this.loader.locate(this).then(function(address){
+				this.address = address;
+			}.bind(this));
+		}
+
+		return promise;
+	},
+
+	fetch: function(){
+		this.step = 'fetch';
+
+		var promise;
+
+		if( this.hasOwnProperty('body') ){
+			promise = Promise.resolve(this.body);
+		}
+		else{
+			promise = this.loader.locate(this).then(function(body){
+				this.body = body;
+			}.bind(this));
+		}
+
+		return promise;
+	},
+
+	translate: function(){
+		this.step = 'translate';
+
+		var promise;
+
+		if( this.hasOwnProperty('source') ){
+			promise = Promise.resolve(this.source);
+		}
+		else{
+			promise = this.loader.translate(this).then(function(source){
+				this.source = source;
+			}.bind(this));
+		}
+
+		return promise.then(function(){
+			this.status = 'loaded';
+		}.bind(this));
+	},
+
+	declareDependency: function(name){
+		var normalizedName = this.loader.normalize(name, this.name, this.address);
+		var moduleDependency = new Module(normalizedName);
+
+		if( moduleDependency === this ){
+			throw new Error(this + ' cannot depends on himself');
+		}
+		if( this.dependents.indexOf(moduleDependency) !== -1 ){
+			throw new Error(this + ' is dependant of ' + moduleDependency);
+		}
+
+		debug(this, 'depends on', moduleDependency);
+
+		if( this.dependencies.indexOf(moduleDependency) === -1 ){
+			this.dependencies.push(moduleDependency);
+		}
+		if( moduleDependency.dependents.indexOf(this) === -1 ){
+			moduleDependency.dependents.push(this);
+		}
+
+		return moduleDependency;
+	},
+
+	collectDependencies: function(){
+		var result = this.loader.collectDependencies(this);
+
+		if( result === undefined ){
+			throw new TypeError('native es6 modules instantiation not supported');
+		}
+		else if( Object(result) === result ){
+			result.forEach(this.declareDependency, this);
+		}
+		else{
+			throw new TypeError('instantiate hook must return an object or undefined');
+		}
+	},
+
+	loadDependencies: function(){
+		// modules are thenable dependencies array is already an array of promise
+		var loadPromises = this.dependencies;
+		return Promise.all(this.dependencies);
+	},
+
+	parse: function(module){
+		var parsed;
+
+		if( this.hasOwnProperty('parsed') ){
+			parsed = this.parsed;
+		}
+		else{
+			parsed = this.loader.parse(this);
+			this.parsed = parsed;
+		}
+
+		return parsed;
+	},
+
+	execute: function(){
+		var value;
+
+		if( this.hasOwnProperty('value') ){
+			value = this.value;
+		}
+		else{
+			value = this.loader.execute(this);
+			this.value = value;
+		}
+
+		this.status = 'executed';
+
+		return value;
+	},
+
+	createPromise: function(){
+		var promise = Promise.resolve();
+
+		[
+			this.locate,
+			this.fetch,
+			this.translate,
+			this.collectDependencies,
+			this.loadDependencies,
+			this.parse,
+			this.execute
+		].forEach(function(name){
+			promise = promise.then(this[name].bind(this));
+		}, this);
+
+		promise = promise.catch(function(error){
+			this.status = 'failed';
+			this.exception = error;
+		}.bind(this));
+
+		return promise;
+	},
+
+	toPromise: function(){
+		var promise;
+
+		if( this.hasOwnProperty('promise') ){
+			promise = this.promise;
+		}
+		else{
+			promise = this.createPromise();
+		}
+
+		return promise;
+	},
+
+	then: function(onResolve, onReject){
+		return this.toPromise().then(onResolve, onReject);
+	}
+};
+Module.constructor.prototype = Module;
+Module = Module.constructor;
+
+var Loader = {
+	modules: null, // module registry
+	optionNames: [
+		'normalize',
+		'locate',
+		'fetch',
+		'translate',
+		'collectDependencies',
+		'parse',
+		'execute'
+	],
+
+	constructor: function(options){
+		if( options ){
+			this.optionNames.forEach(function(method){
+				if( options[method] ) this[method] = options[method];
+			}, this);
+		}
+
+		this.modules = {};
+	},
+
+	normalize: function(name, contextName, contextAddress){
+		return name;
+	},
+
+	locate: function(module){
+		return module.name;
+	},
+
+	fetch: function(module){
+		throw new TypeError('fetch not implemented');
+	},
+
+	translate: function(module){
+		return module.body;
+	},
+
+	collectDependencies: function(){
+
+	},
+
+	parse: function(module){
+		return module.source;
+	},
+
+	execute: function(module){
+		return undefined;
+	},
+
+	get: function(normalizedName){
+		if( this.has(normalizedName) ){
+			return this.modules[normalizedName];
+		}
+		return undefined;
+	},
+
+	has: function(normalizedName){
+		return normalizedName in this.modules;
+	},
+
+	set: function(normalizedName, module){
+		if( false === module instanceof Module ){
+			throw new TypeError('Loader.set(' + normalizedName + ', module) must be a module');
+		}
+		this.modules[normalizedName] = module;
+	},
+
+	delete: function(normalizedName){
+		if( this.has(normalizedName) ){
+			delete this.modules[normalizedName];
+			return true;
+		}
+		return false;
+	},
+
+	entries: function(){ return Iterator(this.modules, 'key+value'); },
+	keys: function(){ return Iterator(this.modules, 'key'); },
+	values: function(){ return Iterator(this.modules, 'value'); },
+
+	define: function(normalizedName, source, options){
+		normalizedName = String(normalizedName);
+		// replace any existing module with the defined one
+		if( this.has(normalizedName) ){
+			this.delete(normalizedName);
+		}
+
+		var module = new Module(normalizedName);
+
+		module.address = normalizedName; // prevent locate()
+		module.source = source; // prevent fetch()
+
+		if( options ){
+			if( options.meta ){
+				module.meta = options.meta;
+			}
+			if( options.address ){
+				module.address = options.address;
+			}
+		}
+
+		return Promise.resolve(module).then(function(){});
+	},
+
+	load: function(normalizedName, options){
+		normalizedName = String(normalizedName);
+
+		var module = new Module(normalizedName);
+
+		// prevent locate()
+		if( options && options.address ){
+			module.address = options.address;
+		}
+
+		return module.locate().then(function(){
+			return module.fetch();
+		});
+	},
+
+	// execute a top level anonymous module, not registering it
+	module: function(source, options){
+		var module = new Module();
+
+		// prevent locate()
+		if( options && options.address ){
+			module.address = options.address;
+		}
+		// prevent fetch()
+		module.source = source;
+
+		return module.then(function(){
+			return module;
+		});
+	},
+
+	import: function(normalizedName, options){
+		normalizedName = String(normalizedName);
+
+		var module = new Module(normalizedName);
+
+		// prevent locate()
+		if( options && options.address ){
+			module.address = options.address;
+		}
+
+		return module.then(function(){
+			return module;
+		});
+	}
+};
 
 // https://gist.github.com/Yaffle/1088850
 function parseURI(url){
@@ -103,6 +470,48 @@ function toAbsoluteURL(base, href){
 	return absoluteUrl;
 }
 
+var collectDependencies = (function(){
+	// https://github.com/jonschlinkert/strip-comments/blob/master/index.js
+	var reLine = /(^|[^\S\n])(?:\/\/)([\s\S]+?)$/gm;
+	var reLineIgnore = /(^|[^\S\n])(?:\/\/[^!])([\s\S]+?)$/gm;
+	function stripLineComment(str, safe){
+		return String(str).replace(safe ? reLineIgnore : reLine, '');
+	}
+
+	var reBlock = /\/\*(?!\/)(.|[\r\n]|\n)+?\*\/\n?\n?/gm;
+	var reBlockIgnore = /\/\*(?!(\*?\/|\*?\!))(.|[\r\n]|\n)+?\*\/\n?\n?/gm;
+	function stripBlockComment(str, safe){
+		return String(str).replace(safe ? reBlockIgnore : reBlock, '');
+	}
+
+	//https://github.com/jonschlinkert/requires-regex/blob/master/index.js
+	var reDependency = /^[ \t]*(var[ \t]*([\w$]+)[ \t]*=[ \t]*)?include\(['"]([\w\W]+?)['"]\)/gm;
+	function collectDependencies(str, keepComments){
+		if( !keepComments ){
+			str = stripLineComment(stripBlockComment(str));
+		}
+
+		var lines = str.split('\n'), len = lines.length, i = 0, calls = [], match, line;
+
+		while(len--){
+			line = lines[i++];
+			match = reDependency.exec(line);
+			if( match ){
+				calls.push({
+					line: i,
+					variable: match[2] || '',
+					name: match[3],
+					original: line
+				});
+			}
+		}
+
+		return calls;
+	}
+
+	return collectDependencies;
+})();
+
 var ENV = {
 	platform: 'unknown',
 	platforms: [],
@@ -117,6 +526,10 @@ var ENV = {
 		'iterator', // because required by promise
 		'promise' // because it's amazing
 	],
+
+	add: function(platform){
+		this.platforms.push(platform);
+	},
 
 	init: function(){
 		var platforms = this.platforms, i = 0, j = platforms.length, platform;
@@ -162,12 +575,8 @@ var ENV = {
 		}
 	},
 
-	add: function(platform){
-		this.platforms.push(platform);
-	},
-
-	eval: function(code, location){
-		if( location ) code+= '\n//# sourceURL=' + location;
+	eval: function(code, url){
+		if( url ) code+= '\n//# sourceURL=' + url;
 		return eval(code);
 	},
 
@@ -216,203 +625,117 @@ var ENV = {
 		return url;
 	},
 
-	locate: function(name){
-		return this.locateFrom(this.baseUrl, name);
-	},
-
-	import: function(name){
-		var location = ENV.locate(name);
-		var module = new Module(location);
-		return module.ready();
-	},
-
-	define: function(name, source){
-		var location = ENV.locate(name);
-
-		if( location in Module.cache ){
-			throw new Error('a module named ' + name + ' already exists');
-		}
-
-		var module = new Module(location);
-		module.exports = exports;
-		return module.ready();
-	}
-};
-
-var Module = {
-	location: null, // location of the module
-	dependencies: null, // module required by this one
-	dependents: null, // module requiring this one
-	cache: {},
-	urlCache: null, // contain cache of resolved urls
-
-	source: null, // module source as string
-	fn: null, // the module method
-	exports: null, // the value returned by fn()
-	meta: null, // maybe usefull a day
-	version: null, // will be supported later
-
-	constructor: function(location){
-		if( location in this.cache ){
-			return this.cache[location];
-		}
-
-		this.location = location;
-		this.cache[location] = this;
-		this.urlCache = {};
-
-		this.dependencies = [];
-		this.dependents = [];
-	},
-
-	toString: function(){
-		return '[Module ' + this.location + ']';
-	},
-
-	createDependency: function(location){
-		var module = new Module(location);
-
-		if( module === this ){
-			throw new Error(this.location + ' cannot depends on himself');
-		}
-		if( this.dependencies.indexOf(module) !== -1 ){
-			throw new Error(this.location + ' is dependant of ' + location);
-		}
-
-		debug(this, 'depends on', location);
-
-		if( this.dependencies.indexOf(module) === -1 ){
-			this.dependencies.push(module);
-		}
-		if( module.dependents.indexOf(this) === -1 ){
-			module.dependents.push(this);
-		}
-
-		return module;
-	},
-
 	createModuleNotFoundError: function(location){
 		var error = new Error('module not found ' + location);
 		error.code = 'MODULE_NOT_FOUND';
 		return error;
 	},
 
-	fetch: function(){
-		var promise;
-
-		debug('fetch', this);
-
-		if( this.hasOwnProperty('source') ){
-			promise = Promise.resolve(this.source);
+	normalize: function(name, contextName, contextAddress){
+		if( typeof name != 'string' ){
+			throw new TypeError('Module name must be a string');
 		}
-		else{
-			var location = this.location;
-			var protocol = location.slice(0, location.indexOf(':'));
 
-			if( protocol in ENV.protocols ){
-				promise = ENV.protocols[protocol](location).then(function(response){
-					if( response.status === 404 ){
-						throw this.createModuleNotFoundError(this.location);
-					}
-					else if( response.status != 200 ){
-						throw new Error('cannot fetch, response status: ' + response.status);
-					}
+		var segments = name.split('/');
 
-					return this.source = response.body;
-				}.bind(this));
+		if( segments.length === 0 ){
+			throw new TypeError('No module name provided');
+		}
+
+		// current segment
+		var i = 0;
+		// is the module name relative
+		var rel = false;
+		// number of backtracking segments
+		var dotdots = 0;
+
+		if( segments[0] == '.' ){
+			i++;
+			if( i == segments.length ){
+				throw new TypeError('Illegal module name "' + name + '"');
 			}
-			else{
-				throw new Error('unsupported fetch protocol ' + protocol);
+			rel = true;
+		}
+		else{
+			while( segments[i] == '..' ){
+				i++;
+				if( i == segments.length ){
+					throw new TypeError('Illegal module name "' + name + '"');
+				}
+			}
+			if( i ){
+				rel = true;
+			}
+			dotdots = i;
+		}
+
+		var j = i, segment;
+		for(;j<segments.length;j++){
+			segment = segments[j];
+			if( segment === '' || segment == '.' || segment == '..' ){
+				throw new TypeError('Illegal module name "' + name + '"');
 			}
 		}
 
-		return promise;
+		if( !rel ){
+			return name;
+		}
+
+		// build the full module name
+		var normalizedParts = [];
+		var parentParts = (contextName || '').split('/');
+		var normalizedLen = parentParts.length - 1 - dotdots;
+
+		normalizedParts = normalizedParts.concat(parentParts.splice(0, parentParts.length - 1 - dotdots));
+		normalizedParts = normalizedParts.concat(segments.splice(i, segments.length - i));
+
+		return normalizedParts.join('/');
 	},
 
-	scan: function(){
-		var dependencyNames;
+	locate: function(module){
+		var address = this.locateFrom(this.baseUrl, module.name);
 
-		debug('scanning', this, 'dependencies');
+		module.meta.location = parseURI(address);
 
-		if( this.hasOwnProperty('dependencyNames') ){
-			dependencyNames = this.dependencyNames;
-		}
-		else{
-			dependencyNames = moduleScanner.scan(this.source).map(function(requireCall){
-				return requireCall.module;
-			});
-			this.dependencyNames = dependencyNames;
-		}
-
-		return dependencyNames;
+		return address;
 	},
 
-	locate: function(name){
-		var url;
+	fetch: function(module){
+		var location = module.meta.location;
+		var protocol = location.protocol;
+		var href = location.href;
 
-		if( name in this.urlCache ){
-			url = this.urlCache[name];
-		}
-		else{
-			url = ENV.locateFrom(this.location, name);
-			this.urlCache[name] = url;
+		if( !(protocol in ENV.protocols) ){
+			throw new Error('unsupported fetch protocol ' + protocol);
 		}
 
-		debug('resolving', name, 'to', url);
+		return ENV.protocols[protocol](href).then(function(response){
+			if( response.status === 404 ){
+				throw this.createModuleNotFoundError(href);
+			}
+			else if( response.status != 200 ){
+				throw new Error('cannot fetch, response status: ' + response.status);
+			}
 
-		return url;
+			return response.body;
+		}.bind(this));
 	},
 
-	createDependencies: function(){
-		var dependencyPaths = this.dependencyNames.map(this.locate, this);
-		var dependencies = dependencyPaths.map(this.createDependency, this);
-		return dependencies;
+	collectDependencies: function(module){
+		return collectDependencies(module.source).map(function(includeCall){
+			return includeCall.name;
+		});
 	},
 
-	compile: function(){
-		var result;
-
-		if( this.hasOwnProperty('exports') ){
-			result = this.exports;
-		}
-		else{
-			var code = '(function(module, require){\n\n' + this.source + '\n\n})', fn;
-
-			fn = ENV.eval(code, this.location); // can throw syntax/reference error in module source
-			this.fn = fn;
-			result = fn.call(ENV.global, this, this.require.bind(this)); // can throw error too
-			this.exports = result;
-
-			// when a dependency is modified I may need to recall fn (without evaluating source)
-		}
-
-		return result;
+	parse: function(module){
+		return this.eval('(function(module, include){\n\n' + module.source + '\n\n})', module.address);
 	},
 
-	ready: function(){
-		var promise;
-
-		if( this.promise ){
-			promise = this.promise;
-		}
-		else{
-			promise = this.fetch().then(function(){
-				this.scan();
-				this.createDependencies();
-				return Promise.all(this.dependencies.map(function(dependency){
-					return dependency.ready();
-				}));
-			}.bind(this)).then(function(){
-				return this.compile();
-			}.bind(this));
-
-			this.promise = promise;
-		}
-
-		return promise;
+	execute: function(module){
+		return module.parsed.call(ENV.global, module, ENV.include.bind(ENV));
 	},
 
-	require: function(name){
+	include: function(name){
 		var url = this.locate(name), module;
 
 		if( !(url in this.cache) ){
@@ -426,105 +749,6 @@ var Module = {
 		}
 
 		return module.exports;
-	}
-};
-
-Module.constructor.prototype = Module;
-Module = Module.constructor;
-
-// https://github.com/ModuleLoader/es6-module-loader/blob/master/src/loader.js#L885
-// https://gist.github.com/dherman/7568080
-// https://github.com/ModuleLoader/es6-module-loader/wiki/Extending-the-ES6-Loader
-var Loader = {
-	loads: null, // list of load record
-	modules: null, // module registry
-
-	constructor: function(options){
-		if( options ){
-			if( options.normalize ) this.normalize = options.normalize;
-			if( options.locate ) this.locate = options.locate;
-			if( options.fetch ) this.fetch = options.fetch;
-			if( options.translate ) this.translate = options.translate;
-			if( options.instantiate ) this.instantiate = options.instantiate;
-		}
-
-		this.loads = {};
-		this.modules = {};
-	},
-
-	define: function(name, source){},
-	load: function(request){},
-	module: function(source){},
-	import: function(name){},
-	eval: function(source){},
-
-	get: function(name){
-		if( this.has(name) ){
-			// TODO: ensure the module is evaluated
-
-			return this.modules[name].module;
-		}
-		return null;
-	},
-	has: function(name){
-		return name in this.modules;
-	},
-	set: function(name, module){
-		if( (module instanceof Module) ){
-			throw new TypeError('Loader.set(' + name + ', module) must be a module');
-		}
-
-		this.modules[name] = {
-			module: module
-		};
-	},
-	delete: function(name){
-		// todo, delete when being loaded
-		if( this.has(name) ){
-			delete this.modules[name];
-			return true;
-		}
-		return false;
-	},
-
-	entries: function(){ return Iterator(this.modules, 'key+value'); },
-	keys: function(){ return Iterator(this.modules, 'key'); },
-	values: function(){ return Iterator(this.modules, 'value'); },
-
-	normalize: function(name, contextName, contextLocation){
-		return name;
-	},
-
-	locate: function(load){
-		return load.name;
-	},
-
-	fetch: function(load){
-		throw new TypeError('fetch not implemented');
-	},
-
-	translate: function(load){
-		return load.source;
-	},
-
-	instantiate: function(){
-
-	}
-};
-
-// object representing an attempt to locate/fetch/translate/parse a module
-var Load = {
-	status: null, // loading, loaded, linked, failed
-	name: null, // the normalized module name
-	meta: null,
-	location: null, // result of locate()
-	source: null, // result of translate()
-	body: null, // resolt of fetch()
-	exception: null, // why the load failed
-	module: null, // module produced by this load
-
-	constructor: function(name){
-		this.name = name;
 	}
 };
 

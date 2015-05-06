@@ -1,3 +1,3 @@
-var result = require('./test-2');
+var result = include('./test-2');
 
 return 'hello' + result;
