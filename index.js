@@ -20,10 +20,7 @@ function debug(){
 
 	args = args.map(function(arg){
 		if( arg instanceof Module ){
-			arg = shortenPath(arg.location);
-		}
-		else if( String(arg).match(/\\|\//) ){
-			arg = shortenPath(arg);
+			arg = arg.name ? arg.name : 'anonymous module';
 		}
 		return arg;
 	});
@@ -53,6 +50,10 @@ var Module = {
 	constructor: function(loader, normalizedName){
 		var module;
 
+		if( false === loader instanceof ES6Loader ){
+			throw new Error('loader expected when creating a module');
+		}
+
 		if( normalizedName && loader.has(normalizedName) ){
 			module = loader.get(normalizedName);
 		}
@@ -81,13 +82,15 @@ var Module = {
 	locate: function(){
 		this.step = 'locate';
 
+		debug('locate', this);
+
 		var promise;
 
 		if( this.hasOwnProperty('address') ){
 			promise = Promise.resolve(this.address);
 		}
 		else{
-			promise = this.loader.locate(this).then(function(address){
+			promise = Promise.resolve(this.loader.locate(this)).then(function(address){
 				this.address = address;
 			}.bind(this));
 		}
@@ -98,13 +101,15 @@ var Module = {
 	fetch: function(){
 		this.step = 'fetch';
 
+		debug('fetch', this);
+
 		var promise;
 
 		if( this.hasOwnProperty('body') ){
 			promise = Promise.resolve(this.body);
 		}
 		else{
-			promise = this.loader.locate(this).then(function(body){
+			promise = this.loader.fetch(this).then(function(body){
 				this.body = body;
 			}.bind(this));
 		}
@@ -121,7 +126,7 @@ var Module = {
 			promise = Promise.resolve(this.source);
 		}
 		else{
-			promise = this.loader.translate(this).then(function(source){
+			promise = Promise.resolve(this.loader.translate(this)).then(function(source){
 				this.source = source;
 			}.bind(this));
 		}
@@ -133,7 +138,7 @@ var Module = {
 
 	declareDependency: function(name){
 		var normalizedName = this.loader.normalize(name, this.name, this.address);
-		var moduleDependency = new Module(normalizedName);
+		var moduleDependency = this.loader.createModule(normalizedName);
 
 		if( moduleDependency === this ){
 			throw new Error(this + ' cannot depends on himself');
@@ -161,7 +166,13 @@ var Module = {
 			throw new TypeError('native es6 modules instantiation not supported');
 		}
 		else if( Object(result) === result ){
-			result.forEach(this.declareDependency, this);
+			if( result.length ){
+				debug(this, 'has the following dependencies in source', result.map(String));
+				result.forEach(this.declareDependency, this);
+			}
+			else{
+				debug(this, 'has no dependency');
+			}
 		}
 		else{
 			throw new TypeError('instantiate hook must return an object or undefined');
@@ -191,6 +202,8 @@ var Module = {
 	execute: function(){
 		var value;
 
+		debug('execute', this);
+
 		if( this.hasOwnProperty('value') ){
 			value = this.value;
 		}
@@ -204,6 +217,22 @@ var Module = {
 		return value;
 	},
 
+	include: function(name){
+		var normalizedName = this.loader.normalize(name);
+
+		if( false === this.loader.has(normalizedName) ){
+			throw new Error(this.name + ' includes ' + normalizedName + ', but the module cannot be found');
+		}
+
+		var module = this.loader.get(normalizedName);
+
+		if( module.status != 'executed' ){
+			throw new Error(this.name + ' includes ' + normalizedName + ', but the module was not executed');
+		}
+
+		return module.value;
+	},
+
 	createPromise: function(){
 		var promise = Promise.resolve();
 
@@ -215,14 +244,17 @@ var Module = {
 			this.loadDependencies,
 			this.parse,
 			this.execute
-		].forEach(function(name){
-			promise = promise.then(this[name].bind(this));
+		].forEach(function(method){
+			promise = promise.then(method.bind(this));
 		}, this);
 
 		promise = promise.catch(function(error){
 			this.status = 'failed';
 			this.exception = error;
+			return Promise.reject(error);
 		}.bind(this));
+
+		this.promise = promise;
 
 		return promise;
 	},
@@ -247,23 +279,14 @@ var Module = {
 Module.constructor.prototype = Module;
 Module = Module.constructor;
 
-var Loader = {
+var ES6Loader = {
 	modules: null, // module registry
-	optionNames: [
-		'normalize',
-		'locate',
-		'fetch',
-		'translate',
-		'collectDependencies',
-		'parse',
-		'execute'
-	],
 
 	constructor: function(options){
 		if( options ){
-			this.optionNames.forEach(function(method){
-				if( options[method] ) this[method] = options[method];
-			}, this);
+			for(var key in options){
+				this[key] = options[key];
+			}
 		}
 
 		this.modules = {};
@@ -323,9 +346,13 @@ var Loader = {
 		return false;
 	},
 
-	entries: function(){ return Iterator(this.modules, 'key+value'); },
-	keys: function(){ return Iterator(this.modules, 'key'); },
-	values: function(){ return Iterator(this.modules, 'value'); },
+	entries: function(){ return new Iterator(this.modules, 'key+value'); },
+	keys: function(){ return new Iterator(this.modules, 'key'); },
+	values: function(){ return new Iterator(this.modules, 'value'); },
+
+	createModule: function(normalizedName){
+		return new Module(this, normalizedName);
+	},
 
 	define: function(normalizedName, source, options){
 		normalizedName = String(normalizedName);
@@ -334,7 +361,7 @@ var Loader = {
 			this.delete(normalizedName);
 		}
 
-		var module = new Module(normalizedName);
+		var module = this.createModule(normalizedName);
 
 		module.address = normalizedName; // prevent locate()
 		module.source = source; // prevent fetch()
@@ -354,7 +381,7 @@ var Loader = {
 	load: function(normalizedName, options){
 		normalizedName = String(normalizedName);
 
-		var module = new Module(normalizedName);
+		var module = this.createModule(normalizedName);
 
 		// prevent locate()
 		if( options && options.address ){
@@ -368,7 +395,7 @@ var Loader = {
 
 	// execute a top level anonymous module, not registering it
 	module: function(source, options){
-		var module = new Module();
+		var module = this.createModule();
 
 		// prevent locate()
 		if( options && options.address ){
@@ -385,7 +412,7 @@ var Loader = {
 	import: function(normalizedName, options){
 		normalizedName = String(normalizedName);
 
-		var module = new Module(normalizedName);
+		var module = this.createModule(normalizedName);
 
 		// prevent locate()
 		if( options && options.address ){
@@ -397,238 +424,117 @@ var Loader = {
 		});
 	}
 };
+ES6Loader.constructor.prototype = ES6Loader;
+ES6Loader = ES6Loader.constructor;
 
-// https://gist.github.com/Yaffle/1088850
-function parseURI(url){
-	url = String(url);
-	url = url.replace(/^\s+|\s+$/g, ''); // trim
-	var match = url.match(/^([^:\/?#]+:)?(\/\/(?:[^:@\/?#]*(?::[^:@\/?#]*)?@)?(([^:\/?#]*)(?::(\d*))?))?([^?#]*)(\?[^#]*)?(#[\s\S]*)?/);
-	// authority = '//' + user + ':' + pass '@' + hostname + ':' port
-	var parsed = null;
-
-	if( match ){
-		parsed = {
-			href     : match[0] || '',
-			protocol : match[1] || '',
-			authority: match[2] || '',
-			host     : match[3] || '',
-			hostname : match[4] || '',
-			port     : match[5] || '',
-			pathname : match[6] || '',
-			search   : match[7] || '',
-			hash     : match[8] || ''
-		};
-	}
-
-	return parsed;
-}
-
-function removeDotSegments(input){
-	var output = [];
-
-	input
-	.replace(/^(\.\.?(\/|$))+/, '')
-	.replace(/\/(\.(\/|$))+/g, '/')
-	.replace(/\/\.\.$/, '/../')
-	.replace(/\/?[^\/]*/g, function(p){
-		if( p === '/..' )
-			output.pop();
-		else
-			output.push(p);
-	});
-
-	return output.join('').replace(/^\//, input.charAt(0) === '/' ? '/' : '');
-}
-
-function forceExtension(pathname, extension){
-	if( pathname.slice(-(extension.length)) != extension ){
-		pathname+= extension;
-	}
-	return pathname;
-}
-
-function toAbsoluteURL(base, href){
-	href = parseURI(href || '');
-	base = parseURI(base || '');
-
-	var absoluteUrl = null;
-
-	if( href && base ){
-		absoluteUrl =
-		(href.protocol || base.protocol) +
-		(href.protocol || href.authority ? href.authority : base.authority) +
-		forceExtension(
-			removeDotSegments(
-				href.protocol || href.authority || href.pathname.charAt(0) === '/' ? href.pathname : (href.pathname ? ((base.authority && !base.pathname ? '/' : '') + base.pathname.slice(0, base.pathname.lastIndexOf('/') + 1) + href.pathname) : base.pathname)
-			),
-			ENV.extension
-		)+
-		(href.protocol || href.authority || href.pathname ? href.search : (href.search || base.search)) +
-		href.hash;
-	}
-
-	return absoluteUrl;
-}
-
-var collectDependencies = (function(){
-	// https://github.com/jonschlinkert/strip-comments/blob/master/index.js
-	var reLine = /(^|[^\S\n])(?:\/\/)([\s\S]+?)$/gm;
-	var reLineIgnore = /(^|[^\S\n])(?:\/\/[^!])([\s\S]+?)$/gm;
-	function stripLineComment(str, safe){
-		return String(str).replace(safe ? reLineIgnore : reLine, '');
-	}
-
-	var reBlock = /\/\*(?!\/)(.|[\r\n]|\n)+?\*\/\n?\n?/gm;
-	var reBlockIgnore = /\/\*(?!(\*?\/|\*?\!))(.|[\r\n]|\n)+?\*\/\n?\n?/gm;
-	function stripBlockComment(str, safe){
-		return String(str).replace(safe ? reBlockIgnore : reBlock, '');
-	}
-
-	//https://github.com/jonschlinkert/requires-regex/blob/master/index.js
-	var reDependency = /^[ \t]*(var[ \t]*([\w$]+)[ \t]*=[ \t]*)?include\(['"]([\w\W]+?)['"]\)/gm;
-	function collectDependencies(str, keepComments){
-		if( !keepComments ){
-			str = stripLineComment(stripBlockComment(str));
-		}
-
-		var lines = str.split('\n'), len = lines.length, i = 0, calls = [], match, line;
-
-		while(len--){
-			line = lines[i++];
-			match = reDependency.exec(line);
-			if( match ){
-				calls.push({
-					line: i,
-					variable: match[2] || '',
-					name: match[3],
-					original: line
-				});
+var Platform = {
+	constructor: function(name, options){
+		this.name = String(name);
+		if( options ){
+			for(var key in options){
+				this[key] = options[key];
 			}
 		}
+	},
 
-		return calls;
+	toString: function(){
+		return '[Platform ' + this.name + ']';
+	},
+
+	getGlobal: function(){
+		return undefined;
+	},
+
+	getSupportedProtocols: function(){
+		return {};
+	},
+
+	getBaseUrl: function(){
+		return '';
+	},
+
+	setup: function(){
+		// noop
+	},
+
+	init: function(){
+		// noop
 	}
+};
+Platform.constructor.prototype = Platform;
+Platform = Platform.constructor;
 
-	return collectDependencies;
-})();
-
-var ENV = {
-	platform: 'unknown',
+var ENV = new ES6Loader({
 	platforms: [],
+	platform: null,
+
 	globalName: 'ENV',
 	global: null,
 	protocols: {},
 	baseUrl: null,
 	extension: '.js',
 	paths: {},
-	dependencies: [
+	requirements: [
 		'symbol', // because required by iterator
 		'iterator', // because required by promise
 		'promise' // because it's amazing
 	],
 
-	add: function(platform){
-		this.platforms.push(platform);
+	createPlatform: function(name, options){
+		return new Platform(name, options);
 	},
 
-	init: function(){
-		var platforms = this.platforms, i = 0, j = platforms.length, platform;
+	definePlatform: function(name, options){
+		var platform = this.createPlatform(name, options);
+		this.platforms.push(platform);
+		return platform;
+	},
 
-		for(;i<j;i++){
+	findPlatform: function(){
+		var platforms = this.platforms, i = platforms.length, platform = null;
+
+		while(i--){
 			platform = platforms[i];
 			if( platform.test.call(this) ){
 				break;
 			}
+			else{
+				platform = null;
+			}
 		}
 
-		if( !platform ){
+		return platform;
+	},
+
+	checkRequirementsFulfillment: function(){
+		this.requirements.forEach(function(requirement){
+			var requirementName = requirement[0].toUpperCase() + requirement.slice(1);
+
+			if( !(requirementName in this.global) ){
+				throw new Error('system needs ' + requirementName + ' but it cannot find it in the global env');
+			}
+		}, this);
+	},
+
+	init: function(){
+		this.platform = this.findPlatform();
+
+		if( this.platform == null ){
 			throw new Error('your javascript environment in not supported');
 		}
 
-		this.platform = platform.name;
-		this.global = platform.getGlobal(); // mandatory
+		this.global = this.platform.getGlobal();
 		this.global[this.globalName] = this;
 
-		if( platform.getSupportedProtocols ){ // optionnal
-			var protocols = platform.getSupportedProtocols();
-			if( protocols ){
-				for(var key in protocols ) this.protocols[key] = protocols[key];
-			}
-		}
+		var protocols = this.platform.getSupportedProtocols(), key;
+		for(key in protocols ) this.protocols[key] = protocols[key];
 
-		this.baseUrl = platform.getBaseUrl(); // mandatory
+		this.baseUrl = this.platform.getBaseUrl(); // mandatory
+		this.platform.setup.call(this);
 
-		if( platform.setup ){ // optionnal
-			platform.setup.call(this);
-		}
+		this.checkRequirementsFulfillment();
 
-		this.dependencies.forEach(function(dependency){
-			var dependencyName = dependency[0].toUpperCase() + dependency.slice(1);
-
-			if( !(dependencyName in this.global) ){
-				throw new Error('system is dependent of ' + dependencyName + ' but it cannot find it in the global env');
-			}
-		}, this);
-
-		if( platform.init ){ // optionnal
-			platform.init.call(this);
-		}
-	},
-
-	eval: function(code, url){
-		if( url ) code+= '\n//# sourceURL=' + url;
-		return eval(code);
-	},
-
-	/*
-	on utiliseras ça surement, ça permet des choses comme
-	ENV.paths['lodash'] = '/js/lodash.js';
-	ENV.paths['lodash/*'] = '/js/lodash/*.js';
-	ENV.locate('lodash'); /js/lodash.js
-	ENV.locate('lodash/map'); /js/lodash/map.js
-	*/
-	locatePath: function(name, key, value){
-		var starIndex = key.indexOf('*'), location = false;
-
-		if( starIndex === -1 ){
-			if( name === key ){
-				location = value;
-			}
-		}
-		else{
-			var left = key.slice(0, starIndex), right = key.slice(starIndex + 1);
-			var nameLeft = name.slice(0, left.length), nameRight = name.slice(name.length - right.length);
-
-			if( left == nameLeft && right == nameRight ){
-				location = value.replace('*', name.slice(left.length, name.length - right.length));
-			}
-		}
-
-		return location;
-	},
-
-	locateFrom: function(base, name){
-		// most specific (longest) match wins
-		var paths = this.paths, location = name, path, match;
-
-		// check to see if we have a paths entry
-		for( path in paths ){
-			match = this.locatePath(name, path, paths[path]);
-
-			if( match && match.length > location.length ){
-				location = match;
-			}
-		}
-
-		var url = toAbsoluteURL(base, location);
-
-		return url;
-	},
-
-	createModuleNotFoundError: function(location){
-		var error = new Error('module not found ' + location);
-		error.code = 'MODULE_NOT_FOUND';
-		return error;
+		this.platform.init.call(this);
 	},
 
 	normalize: function(name, contextName, contextAddress){
@@ -692,24 +598,151 @@ var ENV = {
 		return normalizedParts.join('/');
 	},
 
+	// https://gist.github.com/Yaffle/1088850
+	parseURI: function(url){
+		url = String(url);
+		url = url.replace(/^\s+|\s+$/g, ''); // trim
+		var match = url.match(/^([^:\/?#]+:)?(\/\/(?:[^:@\/?#]*(?::[^:@\/?#]*)?@)?(([^:\/?#]*)(?::(\d*))?))?([^?#]*)(\?[^#]*)?(#[\s\S]*)?/);
+		// authority = '//' + user + ':' + pass '@' + hostname + ':' port
+		var parsed = null;
+
+		if( match ){
+			parsed = {
+				href     : match[0] || '',
+				protocol : match[1] || '',
+				authority: match[2] || '',
+				host     : match[3] || '',
+				hostname : match[4] || '',
+				port     : match[5] || '',
+				pathname : match[6] || '',
+				search   : match[7] || '',
+				hash     : match[8] || ''
+			};
+		}
+
+		return parsed;
+	},
+
+	toAbsoluteURL: (function(){
+		function forceExtension(pathname, extension){
+			if( pathname.slice(-(extension.length)) != extension ){
+				pathname+= extension;
+			}
+			return pathname;
+		}
+
+		function removeDotSegments(input){
+			var output = [];
+
+			input
+			.replace(/^(\.\.?(\/|$))+/, '')
+			.replace(/\/(\.(\/|$))+/g, '/')
+			.replace(/\/\.\.$/, '/../')
+			.replace(/\/?[^\/]*/g, function(p){
+				if( p === '/..' )
+					output.pop();
+				else
+					output.push(p);
+			});
+
+			return output.join('').replace(/^\//, input.charAt(0) === '/' ? '/' : '');
+		}
+
+		function toAbsoluteURL(base, href){
+			href = this.parseURI(href || '');
+			base = this.parseURI(base || '');
+
+			var absoluteUrl = null;
+
+			if( href && base ){
+				absoluteUrl =
+				(href.protocol || base.protocol) +
+				(href.protocol || href.authority ? href.authority : base.authority) +
+				forceExtension(
+					removeDotSegments(
+						href.protocol || href.authority || href.pathname.charAt(0) === '/' ? href.pathname : (href.pathname ? ((base.authority && !base.pathname ? '/' : '') + base.pathname.slice(0, base.pathname.lastIndexOf('/') + 1) + href.pathname) : base.pathname)
+					),
+					this.extension
+				)+
+				(href.protocol || href.authority || href.pathname ? href.search : (href.search || base.search)) +
+				href.hash;
+			}
+
+			return absoluteUrl;
+		}
+
+		return toAbsoluteURL;
+	})(),
+
+	/*
+	on utiliseras ça surement, ça permet des choses comme
+	ENV.paths['lodash'] = '/js/lodash.js';
+	ENV.paths['lodash/*'] = '/js/lodash/*.js';
+	ENV.locate('lodash'); /js/lodash.js
+	ENV.locate('lodash/map'); /js/lodash/map.js
+	*/
+	locatePath: function(name, key, value){
+		var starIndex = key.indexOf('*'), location = false;
+
+		if( starIndex === -1 ){
+			if( name === key ){
+				location = value;
+			}
+		}
+		else{
+			var left = key.slice(0, starIndex), right = key.slice(starIndex + 1);
+			var nameLeft = name.slice(0, left.length), nameRight = name.slice(name.length - right.length);
+
+			if( left == nameLeft && right == nameRight ){
+				location = value.replace('*', name.slice(left.length, name.length - right.length));
+			}
+		}
+
+		return location;
+	},
+
+	locateFrom: function(base, name){
+		// most specific (longest) match wins
+		var paths = this.paths, lastMatch = name, path, match;
+
+		// check to see if we have a paths entry
+		for( path in paths ){
+			match = this.locatePath(name, path, paths[path]);
+
+			if( match && match.length > lastMatch.length ){
+				lastMatch = match;
+			}
+		}
+
+		var url = this.toAbsoluteURL(base, lastMatch);
+
+		return url;
+	},
+
 	locate: function(module){
 		var address = this.locateFrom(this.baseUrl, module.name);
 
-		module.meta.location = parseURI(address);
+		module.meta.location = this.parseURI(address);
 
 		return address;
 	},
 
+	createModuleNotFoundError: function(location){
+		var error = new Error('module not found ' + location);
+		error.code = 'MODULE_NOT_FOUND';
+		return error;
+	},
+
 	fetch: function(module){
 		var location = module.meta.location;
-		var protocol = location.protocol;
+		var protocol = location.protocol.slice(0, -1);
 		var href = location.href;
 
-		if( !(protocol in ENV.protocols) ){
-			throw new Error('unsupported fetch protocol ' + protocol);
+		if( false === protocol in this.protocols ){
+			throw new Error('The protocol "' + protocol + '" is not supported');
 		}
 
-		return ENV.protocols[protocol](href).then(function(response){
+		return this.protocols[protocol](href).then(function(response){
 			if( response.status === 404 ){
 				throw this.createModuleNotFoundError(href);
 			}
@@ -721,10 +754,53 @@ var ENV = {
 		}.bind(this));
 	},
 
-	collectDependencies: function(module){
-		return collectDependencies(module.source).map(function(includeCall){
-			return includeCall.name;
-		});
+	collectDependencies: (function(){
+		// https://github.com/jonschlinkert/strip-comments/blob/master/index.js
+		var reLine = /(^|[^\S\n])(?:\/\/)([\s\S]+?)$/gm;
+		var reLineIgnore = /(^|[^\S\n])(?:\/\/[^!])([\s\S]+?)$/gm;
+		function stripLineComment(str, safe){
+			return String(str).replace(safe ? reLineIgnore : reLine, '');
+		}
+
+		var reBlock = /\/\*(?!\/)(.|[\r\n]|\n)+?\*\/\n?\n?/gm;
+		var reBlockIgnore = /\/\*(?!(\*?\/|\*?\!))(.|[\r\n]|\n)+?\*\/\n?\n?/gm;
+		function stripBlockComment(str, safe){
+			return String(str).replace(safe ? reBlockIgnore : reBlock, '');
+		}
+
+		//https://github.com/jonschlinkert/requires-regex/blob/master/index.js
+		var reDependency = /^[ \t]*(var[ \t]*([\w$]+)[ \t]*=[ \t]*)?include\(['"]([\w\W]+?)['"]\)/gm;
+		function collectIncludeCalls(str){
+			str = stripLineComment(stripBlockComment(str));
+
+			var lines = str.split('\n'), len = lines.length, i = 0, calls = [], match, line;
+
+			while(len--){
+				line = lines[i++];
+				match = reDependency.exec(line);
+				if( match ){
+					calls.push({
+						line: i,
+						variable: match[2] || '',
+						name: match[3],
+						original: line
+					});
+				}
+			}
+
+			return calls;
+		}
+
+		return function collectDependencies(module){
+			return collectIncludeCalls(module.source).map(function(call){
+				return call.name;
+			});
+		};
+	})(),
+
+	eval: function(code, url){
+		if( url ) code+= '\n//# sourceURL=' + url;
+		return eval(code);
 	},
 
 	parse: function(module){
@@ -732,30 +808,11 @@ var ENV = {
 	},
 
 	execute: function(module){
-		return module.parsed.call(ENV.global, module, ENV.include.bind(ENV));
-	},
-
-	include: function(name){
-		var url = this.locate(name), module;
-
-		if( !(url in this.cache) ){
-			throw new Error(url + ' module was not preloaded');
-		}
-
-		module = this.cache[url];
-
-		if( !module.hasOwnProperty('exports') ){
-			throw new Error(name + 'module exports is null');
-		}
-
-		return module.exports;
+		return module.parsed.call(this.global, module, module.include.bind(module));
 	}
-};
+});
 
-// browser
-ENV.add({
-	name: 'browser',
-
+ENV.definePlatform('browser', {
 	test: function(){
 		return typeof window !== 'undefined';
 	},
@@ -828,10 +885,7 @@ ENV.add({
 	}
 });
 
-// node
-ENV.add({
-	name: 'node',
-
+ENV.definePlatform('node', {
 	test: function(){
 		return typeof process !== 'undefined';
 	},
@@ -926,19 +980,16 @@ ENV.add({
 	},
 
 	setup: function(){
-		// node core modules
-		//var natives = process.binding('natives');
-		//for(var key in natives) System.define(key, natives[key]);
-
 		// in node env, just require the dependencies
-		// (browser env must include script tag with the dependencies prior to including system.js)
-		this.dependencies.forEach(function(dependency){
-			require('./core/' + dependency + '.js');
+		// (browser env must include script tag with the dependencies prior to including env.js)
+		this.requirements.forEach(function(requirement){
+			require('./core/' + requirement + '.js');
 		});
 	},
 
 	init: function(){
 		if( require.main === module ){
+			debug('importing', process.argv[2]);
 			this.import(process.argv[2]).then(console.log, function(e){
 				console.error(e.stack);
 			});
