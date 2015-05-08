@@ -17,11 +17,10 @@ Warning if you use chrome : you have to [start chrome using the flag --allow-fil
 
 ## Execution context
 
-The JavaScript is executed in a specific context, for example a file containing
+JavaScript sources are executed in a specific context, for example the following
 
 ```javascript
 var a = include('a');
-
 return 'hello ' + a;
 ```
 
@@ -36,15 +35,14 @@ ENV.load('a').then(function(){
 	// wrap module source in a function & call it
 	(function(module, include){
 		var a = include('a');
-
-		return this.hello + ' ' + a;
+		return 'hello ' + a;
 	}).call(ENV.global, module, module.include.bind(module));
 });
 ```
 
 ## Source location
 
-Javascript sources can be fetched from different locations, the followings includes are valid.
+Javascript sources can be fetched from different locations, for example the followings includes are valid.
 
 ```javascript
 include('foo');
