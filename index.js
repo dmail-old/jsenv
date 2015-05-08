@@ -17,6 +17,8 @@ https://github.com/ModuleLoader/es6-module-loader/wiki/Extending-the-ES6-Loader
 	}
 
 	function debug(){
+	
+
 		var args = Array.prototype.slice.call(arguments);
 
 		args = args.map(function(arg){
@@ -93,6 +95,7 @@ https://github.com/ModuleLoader/es6-module-loader/wiki/Extending-the-ES6-Loader
 			else{
 				promise = Promise.resolve(this.loader.locate(this)).then(function(address){
 					this.address = address;
+					return address;
 				}.bind(this));
 			}
 
@@ -112,6 +115,7 @@ https://github.com/ModuleLoader/es6-module-loader/wiki/Extending-the-ES6-Loader
 			else{
 				promise = this.loader.fetch(this).then(function(body){
 					this.body = body;
+					return body;
 				}.bind(this));
 			}
 
@@ -129,6 +133,7 @@ https://github.com/ModuleLoader/es6-module-loader/wiki/Extending-the-ES6-Loader
 			else{
 				promise = Promise.resolve(this.loader.translate(this)).then(function(source){
 					this.source = source;
+					return source;
 				}.bind(this));
 			}
 
@@ -213,7 +218,7 @@ https://github.com/ModuleLoader/es6-module-loader/wiki/Extending-the-ES6-Loader
 				this.value = value;
 			}
 
-			debug(this, 'returned the value', value);
+			debug(this, 'returned a value of type', typeof value);
 
 			this.status = 'executed';
 
@@ -221,7 +226,7 @@ https://github.com/ModuleLoader/es6-module-loader/wiki/Extending-the-ES6-Loader
 		},
 
 		include: function(name){
-			var normalizedName = this.loader.normalize(name);
+			var normalizedName = this.loader.normalize(name, this.name, this.address);
 
 			if( false === this.loader.has(normalizedName) ){
 				throw new Error(this.name + ' includes ' + normalizedName + ', but the module cannot be found');
@@ -660,13 +665,17 @@ https://github.com/ModuleLoader/es6-module-loader/wiki/Extending-the-ES6-Loader
 				return name;
 			}
 
+			//if( contextName == '@dmail/manage' ) contextName = '@dmail/manage/index.js';
+
 			// build the full module name
 			var normalizedParts = [];
-			var parentParts = (contextName || '').split('/');
+			var parentParts = (contextAddress || contextName || '').split('/');
 			var normalizedLen = parentParts.length - 1 - dotdots;
 
 			normalizedParts = normalizedParts.concat(parentParts.splice(0, parentParts.length - 1 - dotdots));
 			normalizedParts = normalizedParts.concat(segments.splice(i, segments.length - i));
+
+			debug('normalizing', name, contextName, contextAddress, 'to', normalizedParts.join('/'));
 
 			return normalizedParts.join('/');
 		},
@@ -799,7 +808,34 @@ https://github.com/ModuleLoader/es6-module-loader/wiki/Extending-the-ES6-Loader
 		locate: function(module){
 			var address = this.locateFrom(this.baseUrl, module.name);
 
-			module.meta.location = this.parseURI(address);
+
+			module.location = this.parseURI(address);
+
+			var pathname = module.location.pathname;
+			var slashLastIndexOf = pathname.lastIndexOf('/');
+			var dirname, filename, extension;
+
+			if( slashLastIndexOf === -1 ){
+				dirname = '.';
+				filename = pathname;
+			}
+			else{
+				dirname = pathname.slice(0, slashLastIndexOf);
+				filename = pathname.slice(slashLastIndexOf + 1);
+			}
+
+			var dotLastIndexOf = filename.lastIndexOf('.');
+		
+			if( dotLastIndexOf === -1 ){
+				extension = '';
+			}
+			else{
+				extension = filename.slice(dotLastIndexOf);
+			}
+
+			module.dirname = dirname;
+			module.filename = filename;
+			module.extension = extension;			
 
 			return address;
 		},
@@ -811,7 +847,7 @@ https://github.com/ModuleLoader/es6-module-loader/wiki/Extending-the-ES6-Loader
 		},
 
 		fetch: function(module){
-			var location = module.meta.location;
+			var location = module.location;
 			var protocol = location.protocol.slice(0, -1);
 			var href = location.href;
 
@@ -846,7 +882,7 @@ https://github.com/ModuleLoader/es6-module-loader/wiki/Extending-the-ES6-Loader
 			}
 
 			// https://github.com/jonschlinkert/requires-regex/blob/master/index.js
-			var reDependency = /^[ \t]*(var[ \t]*([\w$]+)[ \t]*=[ \t]*)?include\(['"]([\w\W]+?)['"]\)/gm;
+			var reDependency = /^[ \t]*(?:(?:var)?[ \t]*([\w$]+)[ \t]*(?:=|:)[ \t]*)?include\(['"]([\w\W]+?)['"]\)/gm;
 			function collectIncludeCalls(str){
 				str = stripLineComment(stripBlockComment(str));
 
@@ -858,8 +894,8 @@ https://github.com/ModuleLoader/es6-module-loader/wiki/Extending-the-ES6-Loader
 					if( match ){
 						calls.push({
 							line: i,
-							variable: match[2] || '',
-							name: match[3],
+							variable: match[1] || '',
+							name: match[2],
 							original: line
 						});
 					}
@@ -1011,7 +1047,7 @@ https://github.com/ModuleLoader/es6-module-loader/wiki/Extending-the-ES6-Loader
 		},
 
 		getBaseUrl: function(){
-			var baseUrl = 'file://' + __dirname + '/';
+			var baseUrl = 'file://' + process.cwd() + '/';
 
 			if( process.platform.match(/^win/) ){
 				baseUrl = baseUrl.replace(/\\/g, '/');
