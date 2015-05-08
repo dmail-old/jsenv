@@ -602,7 +602,9 @@ var ENV = new ES6Loader({
 	parseURI: function(url){
 		url = String(url);
 		url = url.replace(/^\s+|\s+$/g, ''); // trim
-		var match = url.match(/^([^:\/?#]+:)?(\/\/(?:[^:@\/?#]*(?::[^:@\/?#]*)?@)?(([^:\/?#]*)(?::(\d*))?))?([^?#]*)(\?[^#]*)?(#[\s\S]*)?/);
+
+		var regex = /^([^:\/?#]+:)?(\/\/(?:[^:@\/?#]*(?::[^:@\/?#]*)?@)?(([^:\/?#]*)(?::(\d*))?))?([^?#]*)(\?[^#]*)?(#[\s\S]*)?/;
+		var match = url.match(regex);
 		// authority = '//' + user + ':' + pass '@' + hostname + ':' port
 		var parsed = null;
 
@@ -660,7 +662,9 @@ var ENV = new ES6Loader({
 				(href.protocol || href.authority ? href.authority : base.authority) +
 				forceExtension(
 					removeDotSegments(
-						href.protocol || href.authority || href.pathname.charAt(0) === '/' ? href.pathname : (href.pathname ? ((base.authority && !base.pathname ? '/' : '') + base.pathname.slice(0, base.pathname.lastIndexOf('/') + 1) + href.pathname) : base.pathname)
+						href.protocol || href.authority || href.pathname.charAt(0) === '/' ? href.pathname :
+						(href.pathname ? ((base.authority && !base.pathname ? '/' : '') +
+						base.pathname.slice(0, base.pathname.lastIndexOf('/') + 1) + href.pathname) : base.pathname)
 					),
 					this.extension
 				)+
@@ -768,15 +772,15 @@ var ENV = new ES6Loader({
 			return String(str).replace(safe ? reBlockIgnore : reBlock, '');
 		}
 
-		//https://github.com/jonschlinkert/requires-regex/blob/master/index.js
+		// https://github.com/jonschlinkert/requires-regex/blob/master/index.js
 		var reDependency = /^[ \t]*(var[ \t]*([\w$]+)[ \t]*=[ \t]*)?include\(['"]([\w\W]+?)['"]\)/gm;
 		function collectIncludeCalls(str){
 			str = stripLineComment(stripBlockComment(str));
 
-			var lines = str.split('\n'), len = lines.length, i = 0, calls = [], match, line;
+			var lines = str.split(/[\r\n]+/g), i = 0, j = lines.length, calls = [], match, line;
 
-			while(len--){
-				line = lines[i++];
+			for(;i<j;i++){
+				line = lines[i];
 				match = reDependency.exec(line);
 				if( match ){
 					calls.push({
@@ -786,6 +790,7 @@ var ENV = new ES6Loader({
 						original: line
 					});
 				}
+				reDependency.lastIndex = 0;
 			}
 
 			return calls;
@@ -854,7 +859,7 @@ ENV.definePlatform('browser', {
 		}
 
 		protocols.http = function(url){
-   			return new Promise(function(resolve, reject){
+			return new Promise(function(resolve, reject){
 				var xhr = new XMLHttpRequest();
 
 				xhr.onreadystatechange = function () {
@@ -866,22 +871,22 @@ ENV.definePlatform('browser', {
 						});
 					}
 				};
-		     	xhr.open('GET', url);
-		     	xhr.send(null);
-		   });
-   		};
-   		protocols.https = protocols.http;
-   		protocols.file = function(url){
-   			return protocols.http(url).then(function(response){
+				xhr.open('GET', url);
+				xhr.send(null);
+			});
+		};
+		protocols.https = protocols.http;
+		protocols.file = function(url){
+			return protocols.http(url).then(function(response){
 				// fix for browsers returning status == 0 for local file request
 				if( response.status === 0 ){
 					response.status = response.body ? 200 : 404;
 				}
 				return response;
 			});
-   		};
+		};
 
-   		return protocols;
+		return protocols;
 	}
 });
 

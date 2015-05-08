@@ -1,3 +1,3 @@
-var result = include('./test-2');
+var a = include('a');
 
-return 'hello' + result;
+return a;
