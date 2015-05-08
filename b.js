@@ -1,3 +1,3 @@
-var c = include('c');
+var a = include('a');
 
-return 'b';
+return 'hello ' + a;
