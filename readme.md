@@ -16,14 +16,14 @@ var a = include('a');
 return this.hello + ' ' +  a;
 ```
 
-In a node javascript file
+In node
 ````javascript
 require('@dmail/env');
 global.hello = 'hello';
 ENV.import('b').then(console.log, console.error);
 ```
 
-In a browser script tag
+In a browser
 ```javascript
 window.hello = 'hello';
 ENV.import('b').then(console.log, console.error);
