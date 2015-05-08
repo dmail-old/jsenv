@@ -114,6 +114,6 @@ Symbol.iterator returning '@@iterator' in non es6 env
 
 	if( !global.Symbol ) global.Symbol = Symbol;
 
-})(typeof window === 'undefined' ? global: window);
+})(ENV.global);
 
 

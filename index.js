@@ -506,14 +506,13 @@ var ENV = new ES6Loader({
 		return platform;
 	},
 
-	checkRequirementsFulfillment: function(){
-		this.requirements.forEach(function(requirement){
-			var requirementName = requirement[0].toUpperCase() + requirement.slice(1);
+	hasRequirement: function(requirement){
+		var requirementName = requirement[0].toUpperCase() + requirement.slice(1);
+		return requirementName in this.global;
+	},
 
-			if( !(requirementName in this.global) ){
-				throw new Error('system needs ' + requirementName + ' but it cannot find it in the global env');
-			}
-		}, this);
+	getRequirement: function(){
+		throw new Error('getRequirement() not implemented');
 	},
 
 	init: function(){
@@ -523,18 +522,55 @@ var ENV = new ES6Loader({
 			throw new Error('your javascript environment in not supported');
 		}
 
-		this.global = this.platform.getGlobal();
+		[
+			'getGlobal',
+			'getSupportedProtocols',
+			'getBaseUrl',
+			'getRequirement',
+			'setup'
+		].forEach(function(name){
+			this[name] = this.platform[name];
+		}, this);
+
+		this.global = this.getGlobal();
 		this.global[this.globalName] = this;
-
-		var protocols = this.platform.getSupportedProtocols(), key;
+		var protocols = this.getSupportedProtocols(), key;
 		for(key in protocols ) this.protocols[key] = protocols[key];
+		this.baseUrl = this.getBaseUrl(); // mandatory
 
-		this.baseUrl = this.platform.getBaseUrl(); // mandatory
-		this.platform.setup.call(this);
+		var self = this, requirements = this.requirements, i = 0, j = requirements.length, requirement;
 
-		this.checkRequirementsFulfillment();
+		function fulFillRequirement(error){
+			if( error ){
+				throw new Error('An error occured during requirement load' +  error);
+			}
+			if( !self.hasRequirement(requirement) ){
+				throw new Error('getRequirement() did not fulfill ' + requirement + ' (not found in global)');
+			}
+			nextRequirement();
+		}
 
-		this.platform.init.call(this);
+		function nextRequirement(){
+			if( i >= j ){
+				debug('all requirements fullfilled, calling setup phase');
+				self.setup();
+			}
+			else{
+				requirement = requirements[i];
+				i++;
+				
+				if( self.hasRequirement(requirement) ){
+					debug('already got the requirement', requirement);
+					nextRequirement();
+				}
+				else{
+					debug('get the requirement', requirement);
+					self.getRequirement(requirement, fulFillRequirement);
+				}	
+			}
+		}
+
+		nextRequirement();
 	},
 
 	normalize: function(name, contextName, contextAddress){
@@ -887,6 +923,22 @@ ENV.definePlatform('browser', {
 		};
 
 		return protocols;
+	},
+
+	// browser must include script tag with the requirement
+	getRequirement: function(requirement, done){
+		var script = document.createElement('script');
+
+		script.src = requirement;
+		script.type = 'text/javascript';
+		script.onload = function(){
+			done();
+		};
+		script.onerror = function(error){
+			done(error);
+		};
+
+		document.head.appendChild(script);
 	}
 });
 
@@ -984,15 +1036,13 @@ ENV.definePlatform('node', {
 		return protocols;
 	},
 
-	setup: function(){
-		// in node env, just require the dependencies
-		// (browser env must include script tag with the dependencies prior to including env.js)
-		this.requirements.forEach(function(requirement){
-			require('./core/' + requirement + '.js');
-		});
+	// in node env requires it
+	getRequirement: function(requirement, done){
+		require('./core/' + requirement + '.js');
+		done();
 	},
 
-	init: function(){
+	setup: function(){
 		if( require.main === module ){
 			debug('importing', process.argv[2]);
 			this.import(process.argv[2]).then(console.log, function(e){

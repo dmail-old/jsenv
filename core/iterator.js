@@ -205,4 +205,4 @@
 		return this;
 	};
 	
-})(typeof window === 'undefined' ? global: window);
+})(ENV.global);

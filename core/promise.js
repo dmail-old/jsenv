@@ -262,4 +262,4 @@
 		global.Promise = Promise;
 	}
 
-})(typeof window === 'undefined' ? global: window);
+})(ENV.global);
