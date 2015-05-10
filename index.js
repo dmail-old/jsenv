@@ -881,34 +881,21 @@ https://github.com/ModuleLoader/es6-module-loader/wiki/Extending-the-ES6-Loader
 				return String(str).replace(safe ? reBlockIgnore : reBlock, '');
 			}
 
-			// https://github.com/jonschlinkert/requires-regex/blob/master/index.js
-			var reDependency = /^[ \t]*(?:(?:var)?[ \t]*([\w$]+)[ \t]*(?:=|:)[ \t]*)?include\(['"]([\w\W]+?)['"]\)/gm;
+			var reDependency = /(?:^|.)include\(['"]([\w\W]+?)['"]\)/gm;
 			function collectIncludeCalls(str){
 				str = stripLineComment(stripBlockComment(str));
-
-				var lines = str.split(/[\r\n]+/g), i = 0, j = lines.length, calls = [], match, line;
-
-				for(;i<j;i++){
-					line = lines[i];
-					match = reDependency.exec(line);
-					if( match ){
-						calls.push({
-							line: i,
-							variable: match[1] || '',
-							name: match[2],
-							original: line
-						});
-					}
-					reDependency.lastIndex = 0;
+				
+				var calls = [], match;
+				while(match = reDependency.exec(str) ){
+					calls.push(match[1]);
 				}
-
+				reDependency.lastIndex = 0;
+				
 				return calls;
 			}
 
 			return function collectDependencies(module){
-				return collectIncludeCalls(module.source).map(function(call){
-					return call.name;
-				});
+				return collectIncludeCalls(module.source);
 			};
 		})(),
 
