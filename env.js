@@ -9,6 +9,8 @@ https://github.com/ModuleLoader/es6-module-loader/blob/master/src/loader.js#L885
 https://gist.github.com/dherman/7568080
 https://github.com/ModuleLoader/es6-module-loader/wiki/Extending-the-ES6-Loader
 
+let baseurl be document relative : https://github.com/systemjs/systemjs/blob/master/lib/extension-core.js
+
 */
 
 (function(){
@@ -17,8 +19,6 @@ https://github.com/ModuleLoader/es6-module-loader/wiki/Extending-the-ES6-Loader
 	}
 
 	function debug(){
-
-
 		var args = Array.prototype.slice.call(arguments);
 
 		args = args.map(function(arg){
@@ -552,7 +552,7 @@ https://github.com/ModuleLoader/es6-module-loader/wiki/Extending-the-ES6-Loader
 		},
 
 		polyfillRequirements: function(){
-			this.global.forOf = forOf;
+			this.global.forOf = this.forOf = forOf;
 
 			var self = this, requirements = this.requirements, i = 0, j = requirements.length, requirement;
 
@@ -664,8 +664,6 @@ https://github.com/ModuleLoader/es6-module-loader/wiki/Extending-the-ES6-Loader
 			if( !rel ){
 				return name;
 			}
-
-			//if( contextName == '@dmail/manage' ) contextName = '@dmail/manage/index.js';
 
 			// build the full module name
 			var normalizedParts = [];
@@ -848,7 +846,7 @@ https://github.com/ModuleLoader/es6-module-loader/wiki/Extending-the-ES6-Loader
 
 		fetch: function(module){
 			var location = module.location;
-			var protocol = location.protocol.slice(0, -1);
+			var protocol = location.protocol.slice(0, -1); // remove ':' from 'file:'
 			var href = location.href;
 
 			if( false === protocol in this.protocols ){
@@ -860,7 +858,7 @@ https://github.com/ModuleLoader/es6-module-loader/wiki/Extending-the-ES6-Loader
 					throw this.createModuleNotFoundError(href);
 				}
 				else if( response.status != 200 ){
-					throw new Error('cannot fetch, response status: ' + response.status);
+					throw new Error('fetch failed with response status: ' + response.status);
 				}
 
 				return response.body;
@@ -932,45 +930,47 @@ https://github.com/ModuleLoader/es6-module-loader/wiki/Extending-the-ES6-Loader
 		getSupportedProtocols: function(){
 			var protocols = {};
 
-			// https://gist.github.com/mmazer/5404301
-			function parseHeaders(headerString){
-				var headers = {}, pairs, pair, index, i, j, key, value;
+			protocols.http = (function(){
+				// https://gist.github.com/mmazer/5404301
+				function parseHeaders(headerString){
+					var headers = {}, pairs, pair, index, i, j, key, value;
 
-				if( headerString ){
-					pairs = headerString.split('\u000d\u000a');
-					i = 0;
-					j = pairs.length;
-					for(;i<j;i++){
-						pair = pairs[i];
-						index = pair.indexOf('\u003a\u0020');
-						if( index > 0 ){
-							key = pair.slice(0, index);
-							value = pair.slice(index + 2);
-							headers[key] = value;
+					if( headerString ){
+						pairs = headerString.split('\u000d\u000a');
+						i = 0;
+						j = pairs.length;
+						for(;i<j;i++){
+							pair = pairs[i];
+							index = pair.indexOf('\u003a\u0020');
+							if( index > 0 ){
+								key = pair.slice(0, index);
+								value = pair.slice(index + 2);
+								headers[key] = value;
+							}
 						}
 					}
+
+					return headers;
 				}
 
-				return headers;
-			}
+				return function(url){
+					return new Promise(function(resolve, reject){
+						var xhr = new XMLHttpRequest();
 
-			protocols.http = function(url){
-				return new Promise(function(resolve, reject){
-					var xhr = new XMLHttpRequest();
-
-					xhr.onreadystatechange = function () {
-						if( xhr.readyState === 4 ){
-							resolve({
-								status: xhr.status,
-								body: xhr.responseText,
-								headers: parseHeaders(xhr.getAllResponseHeaders())
-							});
-						}
-					};
-					xhr.open('GET', url);
-					xhr.send(null);
-				});
-			};
+						xhr.onreadystatechange = function () {
+							if( xhr.readyState === 4 ){
+								resolve({
+									status: xhr.status,
+									body: xhr.responseText,
+									headers: parseHeaders(xhr.getAllResponseHeaders())
+								});
+							}
+						};
+						xhr.open('GET', url);
+						xhr.send(null);
+					});
+				};
+			})();
 			protocols.https = protocols.http;
 			protocols.file = function(url){
 				return protocols.http(url).then(function(response){
@@ -1004,7 +1004,7 @@ https://github.com/ModuleLoader/es6-module-loader/wiki/Extending-the-ES6-Loader
 		setup: function(){
 			function ready(){
 				if( ENV.mainModule ){
-					ENV.import(ENV.mainModule).then(alert, console.error);
+					ENV.import(ENV.mainModule);
 				}
 			}
 
@@ -1046,10 +1046,7 @@ https://github.com/ModuleLoader/es6-module-loader/wiki/Extending-the-ES6-Loader
 		getSupportedProtocols: function(){
 			var http = require('http');
 			var https = require('https');
-
-			var protocols = {};
-
-			protocols.http = function(url, isHttps){
+			function createPromiseForHttpResponse(url, isHttps){
 				return new Promise(function(resolve, reject){
 					var httpRequest = (isHttps ? https : http).request({
 						method: 'GET',
@@ -1058,11 +1055,6 @@ https://github.com/ModuleLoader/es6-module-loader/wiki/Extending-the-ES6-Loader
 					});
 
 					function resolveWithHttpResponse(httpResponse){
-						var response = {
-							status: httpResponse.statusCode,
-							headers: httpResponse.headers
-						};
-
 						var buffers = [], length;
 						httpResponse.addListener('data', function(chunk){
 							buffers.push(chunk);
@@ -1075,7 +1067,7 @@ https://github.com/ModuleLoader/es6-module-loader/wiki/Extending-the-ES6-Loader
 								body: Buffer.concat(buffers, length).toString()
 							});
 						});
-						response.addListener('error', reject);
+						httpResponse.addListener('error', reject);
 					}
 
 					httpRequest.addListener('response', resolveWithHttpResponse);
@@ -1083,9 +1075,15 @@ https://github.com/ModuleLoader/es6-module-loader/wiki/Extending-the-ES6-Loader
 					httpRequest.addListener('timeout', reject);
 					httpRequest.addListener('close', reject);
 				});
+			}
+
+			var protocols = {};
+
+			protocols.http = function(url, isHttps){
+				return createPromiseForHttpResponse(url, false);
 			};
 			protocols.https = function(url){
-				return protocols.http(url, true);
+				return createPromiseForHttpResponse(url, true);
 			};
 
 			var fs = require('fs');
@@ -1097,7 +1095,7 @@ https://github.com/ModuleLoader/es6-module-loader/wiki/Extending-the-ES6-Loader
 						if( error ){
 							if( error.code == 'ENOENT' ){
 								resolve({
-									status: 404,
+									status: 404
 								});
 							}
 							else{
@@ -1107,8 +1105,7 @@ https://github.com/ModuleLoader/es6-module-loader/wiki/Extending-the-ES6-Loader
 						else{
 							resolve({
 								status: 200,
-								body: source,
-								headers: {}
+								body: source
 							});
 						}
 					});
@@ -1120,15 +1117,22 @@ https://github.com/ModuleLoader/es6-module-loader/wiki/Extending-the-ES6-Loader
 
 		// in node env requires it
 		getRequirement: function(requirement, done){
-			require('./core/' + requirement + '.js');
-			done();
+			var error = null;
+
+			try{
+				require('./core/' + requirement + '.js');
+			}
+			catch(e){
+				error = e;
+			}
+
+			done(error);
 		},
 
 		setup: function(){
-			if( require.main === module ){
-				this.import(process.argv[2]).then(console.log, function(e){
-					console.error(e.stack);
-				});
+			if( require.main === module && process.argv.length > 2 ){
+				var name = String(process.argv[2]);
+				this.import(name);
 			}
 		}
 	});

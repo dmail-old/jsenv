@@ -1,3 +1,3 @@
 var a = include('a');
 
-return 'hello ' + a;
+console.log('hello ' + a;);

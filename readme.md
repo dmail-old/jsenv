@@ -5,19 +5,19 @@ Load & execute JavaScript modules accross platforms
 ## Node example
 
 - `npm install -g @dmail/env`
-- `node env a.js`
+- `node env b`
 - hello world is logged in the terminal
 
 ## Browser example
 
 - open index.html in your browser
-- hello world appear in an alert popup
+- hello world is logged in the console
 
 Warning if you use chrome : you have to [start chrome using the flag --allow-file-access-from-files](http://www.chrome-allow-file-access-from-file.com)
 
 ## Module format
 
-A module is a javaScript source executed in a specific context, for example the following : 
+A module is a javaScript source executed in a specific context, for example the following :
 
 ```javascript
 var a = include('a');
