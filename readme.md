@@ -1,6 +1,6 @@
 ## env
 
-Execute & load your javascript code accross platforms
+Load & execute JavaScript modules accross platforms
 
 ## Node example
 
@@ -15,9 +15,9 @@ Execute & load your javascript code accross platforms
 
 Warning if you use chrome : you have to [start chrome using the flag --allow-file-access-from-files](http://www.chrome-allow-file-access-from-file.com)
 
-## Execution context
+## Module format
 
-JavaScript sources are executed in a specific context, for example the following
+A module is a javaScript source executed in a specific context, for example the following : 
 
 ```javascript
 var a = include('a');
