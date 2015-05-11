@@ -164,7 +164,7 @@
 		for(var key in proto ) object[key] = proto[key];
 		return object;
 	}
-	
+
 	function polyfill(constructor, iterator){
 		if( !(Symbol.iterator in constructor.prototype) ){
 			Object.defineProperty(constructor.prototype, Symbol.iterator, {
@@ -176,5 +176,5 @@
 			});
 		}
 	}
-	
+
 })(ENV.global);

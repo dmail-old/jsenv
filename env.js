@@ -511,9 +511,10 @@ let baseurl be document relative : https://github.com/systemjs/systemjs/blob/mas
 		extension: '.js',
 		paths: {},
 		requirements: [
-			'symbol', // because required by iterator
-			'iterator', // because required by promise
-			'promise' // because it's amazing
+			'setImmediate', // because required by promise
+			'Symbol', // because required by iterator
+			'Iterator', // because required by promise.all
+			'Promise' // because it's amazing
 		],
 
 		createPlatform: function(name, options){
@@ -543,8 +544,7 @@ let baseurl be document relative : https://github.com/systemjs/systemjs/blob/mas
 		},
 
 		hasRequirement: function(requirement){
-			var requirementName = requirement[0].toUpperCase() + requirement.slice(1);
-			return requirementName in this.global;
+			return requirement in this.global;
 		},
 
 		getRequirement: function(){
@@ -853,7 +853,9 @@ let baseurl be document relative : https://github.com/systemjs/systemjs/blob/mas
 				throw new Error('The protocol "' + protocol + '" is not supported');
 			}
 
-			return this.protocols[protocol](href).then(function(response){
+			return this.protocols[protocol](href).catch(function(error){
+				console.log('fetch failed for', href);
+			}).then(function(response){
 				if( response.status === 404 ){
 					throw this.createModuleNotFoundError(href);
 				}
@@ -957,7 +959,7 @@ let baseurl be document relative : https://github.com/systemjs/systemjs/blob/mas
 					return new Promise(function(resolve, reject){
 						var xhr = new XMLHttpRequest();
 
-						xhr.onreadystatechange = function () {
+						xhr.onreadystatechange = function(){
 							if( xhr.readyState === 4 ){
 								resolve({
 									status: xhr.status,
@@ -989,7 +991,7 @@ let baseurl be document relative : https://github.com/systemjs/systemjs/blob/mas
 		getRequirement: function(requirement, done){
 			var script = document.createElement('script');
 
-			script.src = this.baseURL + '/core/' + requirement + '.js';
+			script.src = this.baseUrl + 'core/' + requirement + '.js';
 			script.type = 'text/javascript';
 			script.onload = function(){
 				done();
@@ -1004,7 +1006,7 @@ let baseurl be document relative : https://github.com/systemjs/systemjs/blob/mas
 		setup: function(){
 			function ready(){
 				if( ENV.mainModule ){
-					ENV.import(ENV.mainModule);
+					ENV.import(ENV.mainModule).catch(console.error);
 				}
 			}
 
@@ -1132,7 +1134,7 @@ let baseurl be document relative : https://github.com/systemjs/systemjs/blob/mas
 		setup: function(){
 			if( require.main === module && process.argv.length > 2 ){
 				var name = String(process.argv[2]);
-				this.import(name);
+				this.import(name).catch(console.error);
 			}
 		}
 	});

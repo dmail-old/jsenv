@@ -118,14 +118,25 @@
 
 			// then() never called
 			if( !this.handled ){
-				this.unhandled = setImmediate(function(){
+				this.unhandled = global.setImmediate(function(){
 					this.unhandled = null;
 					if( !this.handled ){ // then() still never called
-						if( process.listeners('unhandledRejection').length === 0 ){
-							var mess = value instanceof Error ? value.stack : value;
-							console.log('possibly unhandled rejection "' + mess + '" for promise', this);
+						if( ENV.platform.name === 'node' ){
+							if( process.listeners('unhandledRejection').length === 0 ){
+								var mess = value instanceof Error ? value.stack : value;
+								console.log('possibly unhandled rejection "' + mess + '" for promise', this);
+							}
+							process.emit('unhandledRejection', value, this);
 						}
-						process.emit('unhandledRejection', value, this);
+						else if( ENV.platform.name === 'browser' ){
+							if( !window.onrejectionhandled ){
+								var mess = value instanceof Error ? value.stack : value;
+								console.log('possibly unhandled rejection "' + value + '" for promise', this);
+							}
+							else{
+								window.onrejectionhandled(value, this);
+							}
+						}
 					}
 				}.bind(this));
 			}
@@ -182,12 +193,12 @@
 				this.addPending(pending);
 			}
 			else{
-				setImmediate(function(){
+				global.setImmediate(function(){
 					this.startPending(pending);
 				}.bind(this));
 
 				if( this.unhandled ){
-					clearImmediate(this.unhandled);
+					global.clearImmediate(this.unhandled);
 					this.unhandled = null;
 				}
 			}
