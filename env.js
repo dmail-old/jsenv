@@ -989,7 +989,7 @@ let baseurl be document relative : https://github.com/systemjs/systemjs/blob/mas
 		getRequirement: function(requirement, done){
 			var script = document.createElement('script');
 
-			script.src = 'core/' + requirement + '.js';
+			script.src = this.baseURL + '/core/' + requirement + '.js';
 			script.type = 'text/javascript';
 			script.onload = function(){
 				done();
