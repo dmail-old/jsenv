@@ -1088,6 +1088,16 @@ let baseurl be document relative : https://github.com/systemjs/systemjs/blob/mas
 				return createPromiseForHttpResponse(url, true);
 			};
 
+			function createPromiseForGitRequest(path){
+				var basename = require('path').basename(path, require('path').extname(path));
+				var directory = require('path').dirname(path);
+				var gitname = basename + '.git';
+				var gitrepo = 'https://github.com/dmail/';
+				var giturl = gitrepo + gitname;
+
+				return require('child_process').execSync('cd ' + directory + ' & git clone ' + giturl);
+			}
+
 			var fs = require('fs');
 			protocols.file = function(path){
 				path = path.slice('file://'.length);
@@ -1096,6 +1106,9 @@ let baseurl be document relative : https://github.com/systemjs/systemjs/blob/mas
 					fs.readFile(path, function(error, source){
 						if( error ){
 							if( error.code == 'ENOENT' ){
+								// 404, try to get it from git for now
+								// createPromiseForGitRequest
+
 								resolve({
 									status: 404
 								});
