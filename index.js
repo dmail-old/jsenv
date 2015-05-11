@@ -17,7 +17,7 @@ https://github.com/ModuleLoader/es6-module-loader/wiki/Extending-the-ES6-Loader
 	}
 
 	function debug(){
-	
+
 
 		var args = Array.prototype.slice.call(arguments);
 
@@ -574,7 +574,7 @@ https://github.com/ModuleLoader/es6-module-loader/wiki/Extending-the-ES6-Loader
 				else{
 					requirement = requirements[i];
 					i++;
-					
+
 					if( self.hasRequirement(requirement) ){
 						debug('already got the requirement', requirement);
 						nextRequirement();
@@ -582,7 +582,7 @@ https://github.com/ModuleLoader/es6-module-loader/wiki/Extending-the-ES6-Loader
 					else{
 						debug('get the requirement', requirement);
 						self.getRequirement(requirement, fulFillRequirement);
-					}	
+					}
 				}
 			}
 
@@ -825,7 +825,7 @@ https://github.com/ModuleLoader/es6-module-loader/wiki/Extending-the-ES6-Loader
 			}
 
 			var dotLastIndexOf = filename.lastIndexOf('.');
-		
+
 			if( dotLastIndexOf === -1 ){
 				extension = '';
 			}
@@ -835,7 +835,7 @@ https://github.com/ModuleLoader/es6-module-loader/wiki/Extending-the-ES6-Loader
 
 			module.dirname = dirname;
 			module.filename = filename;
-			module.extension = extension;			
+			module.extension = extension;
 
 			return address;
 		},
@@ -881,16 +881,16 @@ https://github.com/ModuleLoader/es6-module-loader/wiki/Extending-the-ES6-Loader
 				return String(str).replace(safe ? reBlockIgnore : reBlock, '');
 			}
 
-			var reDependency = /(?:^|.)include\(['"]([\w\W]+?)['"]\)/gm;
+			var reDependency = /(?:^|;|\s+)include\(['"]([\w\W]+?)['"]\)/gm;
 			function collectIncludeCalls(str){
 				str = stripLineComment(stripBlockComment(str));
-				
+
 				var calls = [], match;
 				while(match = reDependency.exec(str) ){
 					calls.push(match[1]);
 				}
 				reDependency.lastIndex = 0;
-				
+
 				return calls;
 			}
 
@@ -1005,7 +1005,7 @@ https://github.com/ModuleLoader/es6-module-loader/wiki/Extending-the-ES6-Loader
 			function ready(){
 				if( ENV.mainModule ){
 					ENV.import(ENV.mainModule).then(alert, console.error);
-				}			
+				}
 			}
 
 			function completed(){
