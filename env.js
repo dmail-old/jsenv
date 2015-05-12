@@ -417,7 +417,7 @@ let baseurl be document relative : https://github.com/systemjs/systemjs/blob/mas
 			});
 		},
 
-		import: function(normalizedName, options){
+		include: function(normalizedName, options){
 			normalizedName = String(normalizedName);
 
 			var module = this.createModule(normalizedName);
@@ -1006,7 +1006,7 @@ let baseurl be document relative : https://github.com/systemjs/systemjs/blob/mas
 		setup: function(){
 			function ready(){
 				if( ENV.mainModule ){
-					ENV.import(ENV.mainModule).catch(console.error);
+					ENV.include(ENV.mainModule).catch(console.error);
 				}
 			}
 
@@ -1088,30 +1088,132 @@ let baseurl be document relative : https://github.com/systemjs/systemjs/blob/mas
 				return createPromiseForHttpResponse(url, true);
 			};
 
-			function createPromiseForGitRequest(path){
-				var basename = require('path').basename(path, require('path').extname(path));
-				var directory = require('path').dirname(path);
-				var gitname = basename + '.git';
+			var child_process = require('child_process');
+			var path = require('path');
+			var fs = require('fs');
+
+			function createPromiseForModule(location){
+				function hasDirectory(dir){
+					return new Promise(function(resolve, reject){
+						fs.stat(dir, function(error, stat){
+							if( error ){
+								if( error.code == 'ENOENT' ){
+									resolve(false);
+								}
+								else{
+									reject(error);
+								}
+							}
+							else{
+								resolve(stat.isDirectory());
+							}
+						});
+					});
+				}
+
+				function createDirectory(dir){
+					return hasDirectory(dir).then(function(has){
+						if( has ) return;
+
+						console.log('create directory', dir);
+
+						return new Promise(function(resolve, reject){
+							fs.mkdir(dir, function(error){
+								if( error ) reject(error);
+								else resolve();
+							});
+						});
+					});
+				}
+
+				function createDirectoriesTo(dir){
+					console.log('creating directories to', dir);
+
+					var directories = dir.split(path.sep);
+
+					return directories.reduce(function(previous, directory, index){
+						var directoryLocation = directories.slice(0, index + 1).join(path.sep);
+
+						return previous.then(function(){
+							return createDirectory(directoryLocation);
+						});
+					}, Promise.resolve());
+				}
+
+				function cloneRepository(dir, repositoryUrl){
+					return new Promise(function(resolve, reject){
+						child_process.exec('git clone ' + repositoryUrl, {
+							cwd: dir
+						}, function(error, stdout, stderr){
+							if( error || stderr ){
+								reject(error || stderr);
+							}
+							else{
+								resolve(stdout);
+							}
+						});
+					});
+				}
+
+				function symlink(sourceDir, destinationDir){
+					return createDirectoriesTo(destinationDir).then(function(){
+						return new Promise(function(resolve, reject){
+							fs.symlink(sourceDir, destinationDir, 'junction', function(error){
+								if( error ) reject(error);
+								else resolve();
+							});
+						});
+					});
+				}
+
+				var extname = path.extname(location);
+				var basename = path.basename(location);
+				var filename = path.basename(basename, extname);
+
+				var localModule = path.dirname(__dirname) + '/modules/' + basename;
+				var localModuleDirectory = path.dirname(localModule);
+				var projectModule = location;
+				var projectModuleDirectory = path.dirname(location);
+
+				var gitname = filename + '.git';
 				var gitrepo = 'https://github.com/dmail/';
 				var giturl = gitrepo + gitname;
 
-				return require('child_process').execSync('cd ' + directory + ' & git clone ' + giturl);
+				console.log('local module location: ', localModule);
+				console.log('project module location', projectModule);
+
+				return hasDirectory(localModuleDirectory).then(function(has){
+					if( has ){
+						return symlink(localModuleDirectory, projectModuleDirectory);
+					}
+					else{
+						return createDirectoriesTo(localModuleDirectory).then(function(){
+							return cloneRepository(localModuleDirectory, giturl);
+						}).then(function(){
+							return symlink(localModuleDirectory, projectModuleDirectory);
+						});
+					}
+				});
 			}
 
-			var fs = require('fs');
-			protocols.file = function(path){
-				path = path.slice('file://'.length);
+			function fetchFile(location, fromSource){
+				location = location.slice('file://'.length);
 
 				return new Promise(function(resolve, reject){
-					fs.readFile(path, function(error, source){
+					fs.readFile(location, function(error, source){
 						if( error ){
 							if( error.code == 'ENOENT' ){
-								// 404, try to get it from git for now
-								// createPromiseForGitRequest
-
-								resolve({
-									status: 404
-								});
+								// 404, try to get it from sources
+								if( fromSource ){
+									resolve(createPromiseForModule(location).then(function(){
+										return fetchFile(location, false);
+									}));
+								}
+								else{
+									resolve({
+										status: 404
+									});
+								}
 							}
 							else{
 								reject(error);
@@ -1125,6 +1227,10 @@ let baseurl be document relative : https://github.com/systemjs/systemjs/blob/mas
 						}
 					});
 				});
+			}
+
+			protocols.file = function(location){
+				return fetchFile(location);
 			};
 
 			return protocols;
@@ -1147,7 +1253,7 @@ let baseurl be document relative : https://github.com/systemjs/systemjs/blob/mas
 		setup: function(){
 			if( require.main === module && process.argv.length > 2 ){
 				var name = String(process.argv[2]);
-				this.import(name).catch(console.error);
+				this.include(name).catch(console.error);
 			}
 		}
 	});
