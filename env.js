@@ -14,6 +14,25 @@ let baseurl be document relative : https://github.com/systemjs/systemjs/blob/mas
 */
 
 (function(){
+	if( !Object.assign ){
+		Object.assign = function(object){
+			var i = 1, j = arguments.length, owner, keys, n, m, key;
+
+			for(;i<j;i++){
+				owner = arguments[i];
+				if( Object(owner) != owner ) continue;
+				keys = Object.keys(owner);
+				n = 0;
+				m = keys.length;
+
+				for(;n<m;n++){
+					key = keys[n];
+					object[key] = owner[key];
+				}
+			}
+		};
+	}
+
 	function shortenPath(filepath){
 		return require('path').relative(ENV.baseUrl, filepath);
 	}
@@ -292,9 +311,7 @@ let baseurl be document relative : https://github.com/systemjs/systemjs/blob/mas
 
 		constructor: function(options){
 			if( options ){
-				for(var key in options){
-					this[key] = options[key];
-				}
+				Object.assign(this, options);
 			}
 
 			this.modules = {};
@@ -439,9 +456,7 @@ let baseurl be document relative : https://github.com/systemjs/systemjs/blob/mas
 		constructor: function(name, options){
 			this.name = String(name);
 			if( options ){
-				for(var key in options){
-					this[key] = options[key];
-				}
+				Object.assign(this, options);
 			}
 		},
 
@@ -509,7 +524,8 @@ let baseurl be document relative : https://github.com/systemjs/systemjs/blob/mas
 		protocols: {},
 		baseUrl: null,
 		extension: '.js',
-		paths: {},
+		metas: {},
+		repositories: {},
 		requirements: [
 			'setImmediate', // because required by promise
 			'Symbol', // because required by iterator
@@ -601,6 +617,7 @@ let baseurl be document relative : https://github.com/systemjs/systemjs/blob/mas
 				'getSupportedProtocols',
 				'getBaseUrl',
 				'getRequirement',
+				'getSupportedRepositories',
 				'setup'
 			].forEach(function(name){
 				this[name] = this.platform[name];
@@ -608,9 +625,9 @@ let baseurl be document relative : https://github.com/systemjs/systemjs/blob/mas
 
 			this.global = this.getGlobal();
 			this.global[this.globalName] = this;
-			var protocols = this.getSupportedProtocols(), key;
-			for(key in protocols ) this.protocols[key] = protocols[key];
-			this.baseUrl = this.getBaseUrl(); // mandatory
+			Object.assign(this.protocols, this.getSupportedProtocols());
+			Object.assign(this.repositories, this.getSupportedRepositories());
+			this.baseUrl = this.getBaseUrl();
 
 			this.polyfillRequirements();
 		},
@@ -765,48 +782,52 @@ let baseurl be document relative : https://github.com/systemjs/systemjs/blob/mas
 		ENV.locate('lodash'); /js/lodash.js
 		ENV.locate('lodash/map'); /js/lodash/map.js
 		*/
-		locatePath: function(name, key, value){
-			var starIndex = key.indexOf('*'), location = false;
+		matchMeta: function(name, path, meta){
+			var starIndex = path.indexOf('*'), location = false;
 
 			if( starIndex === -1 ){
-				if( name === key ){
-					location = value;
+				if( name === path ){
+					return meta;
 				}
 			}
 			else{
-				var left = key.slice(0, starIndex), right = key.slice(starIndex + 1);
+				var left = path.slice(0, starIndex), right = path.slice(starIndex + 1);
 				var nameLeft = name.slice(0, left.length), nameRight = name.slice(name.length - right.length);
 
 				if( left == nameLeft && right == nameRight ){
-					location = value.replace('*', name.slice(left.length, name.length - right.length));
+					var copy = {}, replacement = name.slice(left.length, name.length - right.length);
+					for(var key in meta){
+						copy[key] = meta[key].replace('*', replacement);
+					}
+					return copy;
 				}
 			}
 
-			return location;
+			return null;
 		},
 
-		locateFrom: function(base, name){
+		findMeta: function(normalizedName){
 			// most specific (longest) match wins
-			var paths = this.paths, lastMatch = name, path, match;
+			var metas = this.metas, bestMeta = {path: normalizedName}, path, meta;
 
-			// check to see if we have a paths entry
-			for( path in paths ){
-				match = this.locatePath(name, path, paths[path]);
+			// check to see if we have an entry
+			for( path in metas ){
+				meta = this.matchMeta(normalizedName, path, metas[path]);
 
-				if( match && match.length > lastMatch.length ){
-					lastMatch = match;
+				if( meta && meta.path.length > bestMeta.path.length ){
+					bestMeta = meta;
 				}
 			}
 
-			var url = this.toAbsoluteURL(base, lastMatch);
-
-			return url;
+			return bestMeta;
 		},
 
 		locate: function(module){
-			var address = this.locateFrom(this.baseUrl, module.name);
+			var meta = this.findMeta(module.name);
+			var path = meta.path;
+			var address = this.toAbsoluteURL(this.baseUrl, path);
 
-
+			Object.assign(module.meta, meta);
 			module.location = this.parseURI(address);
 
 			var pathname = module.location.pathname;
@@ -844,6 +865,29 @@ let baseurl be document relative : https://github.com/systemjs/systemjs/blob/mas
 			return error;
 		},
 
+		install: function(module){
+			if( !module.installed && module.meta.repository ){
+				module.installed = true;
+
+				var repository = module.meta.repository;
+				var type = '';
+
+				if( repository.slice(0, 'git://'.length) == 'git://' || repository.slice('.git'.length) == '.git' ){
+					type = 'git';
+				}
+
+				if( type in this.repositories ){
+					this.repositories[type].call(this, module);
+				}
+				else{
+					throw new Error('unsupported repository ' + repository);
+				}
+			}
+			else{
+				throw this.createModuleNotFoundError(module.location);
+			}
+		},
+
 		fetch: function(module){
 			var location = module.location;
 			var protocol = location.protocol.slice(0, -1); // remove ':' from 'file:'
@@ -853,11 +897,10 @@ let baseurl be document relative : https://github.com/systemjs/systemjs/blob/mas
 				throw new Error('The protocol "' + protocol + '" is not supported');
 			}
 
-			return this.protocols[protocol](href).catch(function(error){
-				console.log('fetch failed for', href);
-			}).then(function(response){
+			// when module is not found and try to install it before fetching it again
+			return this.protocols[protocol](href).then(function(response){
 				if( response.status === 404 ){
-					throw this.createModuleNotFoundError(href);
+					return this.install(module);
 				}
 				else if( response.status != 200 ){
 					throw new Error('fetch failed with response status: ' + response.status);
@@ -1081,139 +1124,24 @@ let baseurl be document relative : https://github.com/systemjs/systemjs/blob/mas
 
 			var protocols = {};
 
-			protocols.http = function(url, isHttps){
+			protocols.http = function(url){
 				return createPromiseForHttpResponse(url, false);
 			};
 			protocols.https = function(url){
 				return createPromiseForHttpResponse(url, true);
 			};
 
-			var child_process = require('child_process');
-			var path = require('path');
 			var fs = require('fs');
-
-			function createPromiseForModule(location){
-				function hasDirectory(dir){
-					return new Promise(function(resolve, reject){
-						fs.stat(dir, function(error, stat){
-							if( error ){
-								if( error.code == 'ENOENT' ){
-									resolve(false);
-								}
-								else{
-									reject(error);
-								}
-							}
-							else{
-								resolve(stat.isDirectory());
-							}
-						});
-					});
-				}
-
-				function createDirectory(dir){
-					return hasDirectory(dir).then(function(has){
-						if( has ) return;
-
-						console.log('create directory', dir);
-
-						return new Promise(function(resolve, reject){
-							fs.mkdir(dir, function(error){
-								if( error ) reject(error);
-								else resolve();
-							});
-						});
-					});
-				}
-
-				function createDirectoriesTo(dir){
-					console.log('creating directories to', dir);
-
-					var directories = dir.split(path.sep);
-
-					return directories.reduce(function(previous, directory, index){
-						var directoryLocation = directories.slice(0, index + 1).join(path.sep);
-
-						return previous.then(function(){
-							return createDirectory(directoryLocation);
-						});
-					}, Promise.resolve());
-				}
-
-				function cloneRepository(dir, repositoryUrl){
-					return new Promise(function(resolve, reject){
-						child_process.exec('git clone ' + repositoryUrl, {
-							cwd: dir
-						}, function(error, stdout, stderr){
-							if( error || stderr ){
-								reject(error || stderr);
-							}
-							else{
-								resolve(stdout);
-							}
-						});
-					});
-				}
-
-				function symlink(sourceDir, destinationDir){
-					return createDirectoriesTo(destinationDir).then(function(){
-						return new Promise(function(resolve, reject){
-							fs.symlink(sourceDir, destinationDir, 'junction', function(error){
-								if( error ) reject(error);
-								else resolve();
-							});
-						});
-					});
-				}
-
-				var extname = path.extname(location);
-				var basename = path.basename(location);
-				var filename = path.basename(basename, extname);
-
-				var localModule = path.dirname(__dirname) + '/modules/' + basename;
-				var localModuleDirectory = path.dirname(localModule);
-				var projectModule = location;
-				var projectModuleDirectory = path.dirname(location);
-
-				var gitname = filename + '.git';
-				var gitrepo = 'https://github.com/dmail/';
-				var giturl = gitrepo + gitname;
-
-				console.log('local module location: ', localModule);
-				console.log('project module location', projectModule);
-
-				return hasDirectory(localModuleDirectory).then(function(has){
-					if( has ){
-						return symlink(localModuleDirectory, projectModuleDirectory);
-					}
-					else{
-						return createDirectoriesTo(localModuleDirectory).then(function(){
-							return cloneRepository(localModuleDirectory, giturl);
-						}).then(function(){
-							return symlink(localModuleDirectory, projectModuleDirectory);
-						});
-					}
-				});
-			}
-
-			function fetchFile(location, fromSource){
+			function fetchFile(location){
 				location = location.slice('file://'.length);
 
 				return new Promise(function(resolve, reject){
 					fs.readFile(location, function(error, source){
 						if( error ){
 							if( error.code == 'ENOENT' ){
-								// 404, try to get it from sources
-								if( fromSource ){
-									resolve(createPromiseForModule(location).then(function(){
-										return fetchFile(location, false);
-									}));
-								}
-								else{
-									resolve({
-										status: 404
-									});
-								}
+								resolve({
+									status: 404
+								});
 							}
 							else{
 								reject(error);
@@ -1229,8 +1157,8 @@ let baseurl be document relative : https://github.com/systemjs/systemjs/blob/mas
 				});
 			}
 
-			protocols.file = function(location){
-				return fetchFile(location);
+			protocols.file = function(location, module){
+				return fetchFile(location, module);
 			};
 
 			return protocols;
@@ -1250,10 +1178,127 @@ let baseurl be document relative : https://github.com/systemjs/systemjs/blob/mas
 			done(error);
 		},
 
+		getSupportedRepositories: function(module){
+			var child_process = require('child_process');
+			var path = require('path');
+			var fs = require('fs');
+
+			function hasDirectory(dir){
+				return new Promise(function(resolve, reject){
+					fs.stat(dir, function(error, stat){
+						if( error ){
+							if( error.code == 'ENOENT' ){
+								resolve(false);
+							}
+							else{
+								reject(error);
+							}
+						}
+						else{
+							resolve(stat.isDirectory());
+						}
+					});
+				});
+			}
+
+			function createDirectory(dir){
+				return hasDirectory(dir).then(function(has){
+					if( has ) return;
+
+					console.log('create directory', dir);
+
+					return new Promise(function(resolve, reject){
+						fs.mkdir(dir, function(error){
+							if( error ) reject(error);
+							else resolve();
+						});
+					});
+				});
+			}
+
+			function createDirectoriesTo(dir){
+				console.log('creating directories to', dir);
+
+				var directories = dir.split(path.sep);
+
+				return directories.reduce(function(previous, directory, index){
+					var directoryLocation = directories.slice(0, index + 1).join(path.sep);
+
+					return previous.then(function(){
+						return createDirectory(directoryLocation);
+					});
+				}, Promise.resolve());
+			}
+
+			function cloneRepository(dir, repositoryUrl){
+				return new Promise(function(resolve, reject){
+					child_process.exec('git clone ' + repositoryUrl, {
+						cwd: dir
+					}, function(error, stdout, stderr){
+						console.log(error);
+
+						if( error || stderr ){
+							reject(error || stderr);
+						}
+						else{
+							resolve(stdout);
+						}
+					});
+				});
+			}
+
+			function symlink(sourceDir, destinationDir){
+				return createDirectoriesTo(destinationDir).then(function(){
+					return new Promise(function(resolve, reject){
+						fs.symlink(sourceDir, destinationDir, 'junction', function(error){
+							if( error ) reject(error);
+							else resolve();
+						});
+					});
+				});
+			}
+
+			var repositories = {};
+
+			repositories.git = function(gitUrl, module){
+				var location = module.location.href.slice('file://'.length);
+				var relativeModuleLocation = path.relative(process.cwd(), location);
+				var localModule = path.dirname(process.cwd()) + '/' + relativeModuleLocation;
+				var localModuleDirectory = path.dirname(localModule);
+				var localModuleFolder = path.dirname(localModuleDirectory);
+				var projectModule = location;
+				var projectModuleDirectory = path.dirname(location);
+				var giturl = module.meta.repository;
+
+				console.log('local module location: ', localModule);
+				console.log('project module location', projectModule);
+				console.log('git module location', giturl);
+
+				return hasDirectory(localModuleDirectory).then(function(has){
+					if( has ){
+						return symlink(localModuleDirectory, projectModuleDirectory);
+					}
+					else{
+						return createDirectoriesTo(localModuleFolder).then(function(){
+							return cloneRepository(localModuleFolder, giturl);
+						}).then(function(){
+							return symlink(localModuleDirectory, projectModuleDirectory);
+						});
+					}
+				}).then(function(){
+					return this.fetch(module);
+				}.bind(this));
+			};
+
+			return repositories;
+		},
+
 		setup: function(){
 			if( require.main === module && process.argv.length > 2 ){
 				var name = String(process.argv[2]);
-				this.include(name).catch(console.error);
+				this.include(name).catch(function(error){
+					console.error(error.stack);
+				});
 			}
 		}
 	});
