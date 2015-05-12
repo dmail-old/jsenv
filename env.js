@@ -1182,36 +1182,37 @@ let baseurl be document relative : https://github.com/systemjs/systemjs/blob/mas
 			var path = require('path');
 			var fs = require('fs');
 
-			function hasDirectory(dir){
+			function filesystem(method){
+				var args = Array.prototype.slice.call(arguments, 1);
+
 				return new Promise(function(resolve, reject){
-					fs.stat(dir, function(error, stat){
+					args.push(function(error, result){
 						if( error ){
-							if( error.code == 'ENOENT' ){
-								resolve(false);
-							}
-							else{
-								reject(error);
-							}
+							reject(error);
 						}
 						else{
-							resolve(stat.isDirectory());
+							resolve(result);
 						}
 					});
+
+					fs[method].apply(fs, args);
+				});
+			}
+
+			function hasDirectory(dir){
+				return filesystem('stat', dir).then(function(stat){
+					return stat.isDirectory();
+				}).catch(function(error){
+					if( error && error.code == 'ENOENT' ) return false;
+					return Promise.reject(error);
 				});
 			}
 
 			function createDirectory(dir){
 				return hasDirectory(dir).then(function(has){
 					if( has ) return;
-
 					console.log('create directory', dir);
-
-					return new Promise(function(resolve, reject){
-						fs.mkdir(dir, function(error){
-							if( error ) reject(error);
-							else resolve();
-						});
-					});
+					return filesystem('mkdir', dir);
 				});
 			}
 
@@ -1245,19 +1246,48 @@ let baseurl be document relative : https://github.com/systemjs/systemjs/blob/mas
 				});
 			}
 
+			function lstat(dir){
+				return filesystem('lstat', dir);
+			}
+
 			function symlink(sourceDir, destinationDir){
 				debug('symlink', sourceDir, destinationDir);
 
-				return createDirectoriesTo(path.dirname(destinationDir)).then(function(){
-					return new Promise(function(resolve, reject){
-						fs.symlink(sourceDir, destinationDir, 'junction', function(error){
-							if( error ){
-								if( error.code === 'EEXIST' ) resolve();
-								else reject(error);
+				return lstat(destinationDir).then(function(stat){
+					// check the existing symbolic link
+					if( stat.isSymbolicLink() ){
+						return filesystem('readlink', destinationDir).then(function(link){
+							if( link != destinationDir ){
+								debug('remove previous link to', destinationDir);
+								return filesystem('unlink', destinationDir);
 							}
-							else resolve();
+							else{
+								var error = new Error(destinationDir + 'already linked to ' + sourceDir);
+								error.code = 'EEXIST';
+								throw error;
+							}
 						});
-					});
+					}
+					// a folder exists, but this folder does not contain
+					// the desired module, not supposed to happen
+					else{
+						throw new Error(destinationDir, 'exists, please delete this folder');
+					}
+				// create directories leading to the symlink
+				}).catch(function(error){
+					if( error && error.code == 'ENOENT' ){
+						return createDirectoriesTo(path.dirname(destinationDir));
+					}
+					return Promise.reject(error);
+				// do symlink
+				}).then(function(){
+					return filesystem('symlink', sourceDir, destinationDir, 'junction');
+				// eexist is not an error
+				}).catch(function(error){
+					if( error && error.code === 'EEXIST'){
+						return null;
+					}
+					return Promise.reject(error);
 				});
 			}
 
