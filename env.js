@@ -872,12 +872,12 @@ let baseurl be document relative : https://github.com/systemjs/systemjs/blob/mas
 				var repository = module.meta.repository;
 				var type = '';
 
-				if( repository.slice(0, 'git://'.length) == 'git://' || repository.slice('.git'.length) == '.git' ){
+				if( repository.slice(0, 'git://'.length) == 'git://' || repository.slice(-'.git'.length) == '.git' ){
 					type = 'git';
 				}
 
 				if( type in this.repositories ){
-					this.repositories[type].call(this, module);
+					return this.repositories[type].call(this, module);
 				}
 				else{
 					throw new Error('unsupported repository ' + repository);
@@ -897,7 +897,6 @@ let baseurl be document relative : https://github.com/systemjs/systemjs/blob/mas
 				throw new Error('The protocol "' + protocol + '" is not supported');
 			}
 
-			// when module is not found and try to install it before fetching it again
 			return this.protocols[protocol](href).then(function(response){
 				if( response.status === 404 ){
 					return this.install(module);
@@ -1217,12 +1216,10 @@ let baseurl be document relative : https://github.com/systemjs/systemjs/blob/mas
 			}
 
 			function createDirectoriesTo(dir){
-				console.log('creating directories to', dir);
-
-				var directories = dir.split(path.sep);
+				var directories = dir.split('/');
 
 				return directories.reduce(function(previous, directory, index){
-					var directoryLocation = directories.slice(0, index + 1).join(path.sep);
+					var directoryLocation = directories.slice(0, index + 1).join('/');
 
 					return previous.then(function(){
 						return createDirectory(directoryLocation);
@@ -1231,27 +1228,33 @@ let baseurl be document relative : https://github.com/systemjs/systemjs/blob/mas
 			}
 
 			function cloneRepository(dir, repositoryUrl){
+				debug('cd', dir, 'git clone', repositoryUrl);
+
 				return new Promise(function(resolve, reject){
 					child_process.exec('git clone ' + repositoryUrl, {
 						cwd: dir
 					}, function(error, stdout, stderr){
-						console.log(error);
-
-						if( error || stderr ){
-							reject(error || stderr);
+						if( error ){
+							reject(error);
 						}
 						else{
-							resolve(stdout);
+							console.log(stdout || stderr);
+							resolve();
 						}
 					});
 				});
 			}
 
 			function symlink(sourceDir, destinationDir){
-				return createDirectoriesTo(destinationDir).then(function(){
+				debug('symlink', sourceDir, destinationDir);
+
+				return createDirectoriesTo(path.dirname(destinationDir)).then(function(){
 					return new Promise(function(resolve, reject){
 						fs.symlink(sourceDir, destinationDir, 'junction', function(error){
-							if( error ) reject(error);
+							if( error ){
+								if( error.code === 'EEXIST' ) resolve();
+								else reject(error);
+							}
 							else resolve();
 						});
 					});
@@ -1260,14 +1263,17 @@ let baseurl be document relative : https://github.com/systemjs/systemjs/blob/mas
 
 			var repositories = {};
 
-			repositories.git = function(gitUrl, module){
+			repositories.git = function(module){
 				var location = module.location.href.slice('file://'.length);
-				var relativeModuleLocation = path.relative(process.cwd(), location);
-				var localModule = path.dirname(process.cwd()) + '/' + relativeModuleLocation;
+				var base = this.baseUrl.slice('file://'.length);
+
+				var relativeModuleLocation = path.relative(base, location);
+				var localModule = path.dirname(base) + '/' + relativeModuleLocation;
 				var localModuleDirectory = path.dirname(localModule);
 				var localModuleFolder = path.dirname(localModuleDirectory);
 				var projectModule = location;
 				var projectModuleDirectory = path.dirname(location);
+				var projectModuleFolder = path.dirname(projectModuleDirectory);
 				var giturl = module.meta.repository;
 
 				console.log('local module location: ', localModule);
@@ -1276,6 +1282,7 @@ let baseurl be document relative : https://github.com/systemjs/systemjs/blob/mas
 
 				return hasDirectory(localModuleDirectory).then(function(has){
 					if( has ){
+						debug(module, 'has local directory');
 						return symlink(localModuleDirectory, projectModuleDirectory);
 					}
 					else{
