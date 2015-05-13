@@ -58,6 +58,15 @@ function hasDirectory(dir){
 	});
 }
 
+function hasFile(file){
+	return filesystem('stat', file).then(function(stat){
+		return stat.isFile();
+	}).catch(function(error){
+		if( error && error.code == 'ENOENT' ) return false;
+		return Promise.reject(error);
+	});
+}
+
 function createDirectory(dir){
 	return hasDirectory(dir).then(function(has){
 		if( has ) return;
@@ -66,8 +75,10 @@ function createDirectory(dir){
 	});
 }
 
-function createDirectoriesTo(dir){
-	var directories = dir.split('/');
+function createDirectoriesTo(location){
+	var directories = location.split('/');
+
+	directories.pop();
 
 	return directories.reduce(function(previous, directory, index){
 		var directoryLocation = directories.slice(0, index + 1).join('/');
@@ -96,8 +107,8 @@ function cloneRepository(dir, repositoryUrl){
 	});
 }
 
-function lstat(dir){
-	return filesystem('lstat', dir);
+function lstat(location){
+	return filesystem('lstat', location);
 }
 
 function symlink(source, destination){
@@ -118,15 +129,14 @@ function symlink(source, destination){
 				}
 			});
 		}
-		// a folder exists, but this folder does not contain
-		// the desired module, not supposed to happen
+		// the file or folder exists, not supposed to happen
 		else{
-			throw new Error(destination, 'exists, please delete it');
+			throw new Error(destination, 'exists, please delete this');
 		}
 	// create directories leading to the symlink
 	}).catch(function(error){
 		if( error && error.code == 'ENOENT' ){
-			return createDirectoriesTo(path.dirname(destination));
+			return createDirectoriesTo(destination);
 		}
 		return Promise.reject(error);
 	// do symlink
@@ -149,19 +159,53 @@ la logique ou on cherche le module à cet endroit et on le symlink sors de la fo
 
 IMPORTANT : par défaut un module externe est FORCEMENT dans un dossier
 il n'est pas possible de dépendre de fichier externe pour le moment
+
+le comportement par défaut devrait être de pouvoir dépendre d'un fichier
+et git & file fonctionne différrement en disant de tester la présence du dossier et non du fichier
 */
 
-var protocols = {};
+var protocols = {
+	'git+https': {
+		base: '../modules',
 
-protocols['git+https'] = function(directory, repositoryUrl){
-	return cloneRepository(directory, repositoryUrl.slice('git+'.length));
-};
+		getProjectName: function(name){
+			return path.dirname(name.slice('file://'.length));
+		},
 
-protocols.file = function(directory, fileLocation){
-	return symlink(fileLocation, directory);
+		getLocalName: function(projectName){
+			var base = ENV.baseUrl.slice('file://'.length);
+			base = path.resolve(this.base, base);
+
+			var relativeName = path.relative(base, projectName);
+			var localName = path.dirname(base) + '/' + relativeName;
+
+			return localName;
+		},
+
+		fetch: function(localName, giturl){
+			return hasDirectory(localName).then(function(has){
+				if( has ) return;
+				return cloneRepository(path.dirname(localName), giturl.slice('git+'.length));
+			});
+		}
+	}
 };
 
 /*
+protocols.file = {
+	getProjectName: function(name){
+		return name.slice('file://'.length);
+	},
+
+	getLocalName: function(name){
+		return name;
+	},
+
+	fetch: function(localName, fileName){
+		return symlink(localName, fileName);
+	}
+}
+
 http & https should target a zip
 protocols.http = protocols.https = function(directory, url){
 
@@ -169,43 +213,28 @@ protocols.http = protocols.https = function(directory, url){
 */
 
 function fetchRegistry(module){
-	var location = module.location;
-	var address = location.href.slice('file://'.length);
-	var projectLocation = address;
-	var projectFolder = path.dirname(address);
-	var projectModuleFolder = path.dirname(projectFolder);
-
-	var base = ENV.baseUrl.slice('file://'.length);
-	base = path.resolve(module.meta.registryBase, base);
-	var relativeModuleLocation = path.relative(base, address);
-	var localLocation = path.dirname(base) + '/' + relativeModuleLocation;
-	var localFolder = path.dirname(localLocation);
-	var localModuleFolder = path.dirname(localFolder);
-
 	var registry = ENV.parseURI(module.meta.registry);
-	var registryLocation = registry.href;
 	var registryProtocol = registry.protocol.slice(0, -1);
 
 	if( false === registryProtocol in protocols ){
 		throw new Error('the registry ' + registryProtocol + ' is not supported');
 	}
 
-	debug('project module location', projectLocation);
-	debug('local module location: ', localLocation);
-	debug('registry module location', registryLocation);
+	var protocol = protocols[registryProtocol];
+	var projectName = protocol.getProjectName(module.location.href);
+	var localName = protocol.getLocalName(projectName);
+	var registryName = registry.href;
 
-	return hasDirectory(localFolder).then(function(has){
-		if( has ){
-			debug(location, 'has local directory');
-			return symlink(localFolder, projectFolder);
-		}
-		else{
-			return createDirectoriesTo(localModuleFolder).then(function(){
-				return protocols[registryProtocol](localModuleFolder, registryLocation);
-			}).then(function(){
-				return symlink(localFolder, projectFolder);
-			});
-		}
+	debug('project name', projectName);
+	debug('local name: ', localName);
+	debug('registry name', registryName);
+
+	return protocol.fetch(localName, registryName).then(function(){
+	// symlink
+		return symlink(localName, projectName);
+	}).then(function(){
+	// now it has been fetched from registry, refetch "locally"
+		return ENV.fetch(module);
 	});
 }
 
