@@ -11,6 +11,12 @@ https://github.com/ModuleLoader/es6-module-loader/wiki/Extending-the-ES6-Loader
 
 let baseurl be document relative : https://github.com/systemjs/systemjs/blob/master/lib/extension-core.js
 
+on utiliseras ça surement, ça permet des choses comme
+ENV.paths['lodash'] = '/js/lodash.js';
+ENV.paths['lodash/*'] = '/js/lodash/*.js';
+ENV.locate('lodash'); /js/lodash.js
+ENV.locate('lodash/map'); /js/lodash/map.js
+
 */
 
 (function(){
@@ -524,7 +530,7 @@ let baseurl be document relative : https://github.com/systemjs/systemjs/blob/mas
 		protocols: {},
 		baseUrl: null,
 		extension: '.js',
-		metas: {},
+		configs: [],
 		repositories: {},
 		requirements: [
 			'setImmediate', // because required by promise
@@ -775,19 +781,23 @@ let baseurl be document relative : https://github.com/systemjs/systemjs/blob/mas
 			return toAbsoluteURL;
 		})(),
 
-		/*
-		on utiliseras ça surement, ça permet des choses comme
-		ENV.paths['lodash'] = '/js/lodash.js';
-		ENV.paths['lodash/*'] = '/js/lodash/*.js';
-		ENV.locate('lodash'); /js/lodash.js
-		ENV.locate('lodash/map'); /js/lodash/map.js
-		*/
-		matchMeta: function(name, path, meta){
-			var starIndex = path.indexOf('*'), location = false;
+		config: function(path, properties){
+			this.configs.push({
+				path: path,
+				properties: properties
+			});
+			// keep config sorted (the most specific config is the last applied)
+			this.configs = this.configs.sort(function(a, b){
+				return (a.path ? a.path.length : 0) - (b.path ? b.path.length : 0);
+			});
+		},
+
+		matchPath: function(name, path){
+			var starIndex = path.indexOf('*'), match = false;
 
 			if( starIndex === -1 ){
 				if( name === path ){
-					return meta;
+					match =  true;
 				}
 			}
 			else{
@@ -795,31 +805,29 @@ let baseurl be document relative : https://github.com/systemjs/systemjs/blob/mas
 				var nameLeft = name.slice(0, left.length), nameRight = name.slice(name.length - right.length);
 
 				if( left == nameLeft && right == nameRight ){
-					var copy = {}, replacement = name.slice(left.length, name.length - right.length);
-					for(var key in meta){
-						copy[key] = meta[key].replace('*', replacement);
-					}
-					return copy;
+					match = name.slice(left.length, name.length - right.length);
 				}
 			}
 
-			return null;
+			return match;
 		},
 
 		findMeta: function(normalizedName){
-			// most specific (longest) match wins
-			var metas = this.metas, bestMeta = {path: normalizedName}, path, meta;
+			var meta = {path: normalizedName}, match;
 
-			// check to see if we have an entry
-			for( path in metas ){
-				meta = this.matchMeta(normalizedName, path, metas[path]);
-
-				if( meta && meta.path.length > bestMeta.path.length ){
-					bestMeta = meta;
+			this.configs.forEach(function(config){
+				match = this.matchPath(normalizedName, config.path);
+				if( match ){
+					Object.assign(meta, config.properties);
+					if( typeof match === 'string' ){
+						for(var key in meta){
+							meta[key] = meta[key].replace('*', match);
+						}
+					}
 				}
-			}
+			}, this);
 
-			return bestMeta;
+			return meta;
 		},
 
 		locate: function(module){
