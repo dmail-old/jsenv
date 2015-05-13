@@ -59,7 +59,7 @@ ENV.locate('lodash/map'); /js/lodash/map.js
 	// object representing an attempt to locate/fetch/translate/parse a module
 	var Module = {
 		loader: null, // loader used to load this module
-		status: null, // loading, loaded, executed, failed
+		status: null, // loading, loaded, failed
 		meta: null,
 		name: undefined, // the normalized module name, can be undefined for anonymous modules
 
@@ -233,19 +233,14 @@ ENV.locate('lodash/map'); /js/lodash/map.js
 		execute: function(){
 			var value;
 
-			debug('execute', this);
-
 			if( this.hasOwnProperty('value') ){
 				value = this.value;
 			}
 			else{
 				value = this.loader.execute(this);
 				this.value = value;
+				debug('executed', this, 'getting a value of type', typeof value);
 			}
-
-			debug(this, 'returned a value of type', typeof value);
-
-			this.status = 'executed';
 
 			return value;
 		},
@@ -452,6 +447,8 @@ ENV.locate('lodash/map'); /js/lodash/map.js
 			}
 
 			return module.then(function(){
+				module.parse();
+				module.execute();
 				return module;
 			});
 		}
@@ -929,6 +926,9 @@ ENV.locate('lodash/map'); /js/lodash/map.js
 			}
 
 			var reDependency = /(?:^|;|\s+|ENV\.)include\(['"]([^'"]+)['"]\)/gm;
+			// for the moment remove regex for static ENV.include(), it's just an improvment but
+			// not required at all + it's strange for a dynamic ENV.include to be preloaded
+			reDependency = /(?:^|;|\s+)include\(['"]([^'"]+)['"]\)/gm;
 			function collectIncludeCalls(str){
 				str = stripLineComment(stripBlockComment(str));
 

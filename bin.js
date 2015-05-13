@@ -79,7 +79,7 @@ function createDirectoriesTo(dir){
 }
 
 function cloneRepository(dir, repositoryUrl){
-	debug('cd', dir, 'git clone', repositoryUrl);
+	debug('cd', dir, '& git clone', repositoryUrl);
 
 	return new Promise(function(resolve, reject){
 		child_process.exec('git clone ' + repositoryUrl, {
@@ -141,39 +141,71 @@ function symlink(source, destination){
 	});
 }
 
-var repositories = {};
+/*
+Par défaut tous les modules externes (http & git) sont mit dans le dossier parent modules
+pour éviter qu'on les cherche et on les symlink
 
-function git(module){
-	var location = module.location.href.slice('file://'.length);
+la logique ou on cherche le module à cet endroit et on le symlink sors de la fonction clonerepo
+
+IMPORTANT : par défaut un module externe est FORCEMENT dans un dossier
+il n'est pas possible de dépendre de fichier externe pour le moment
+*/
+
+var protocols = {};
+
+protocols['git+https'] = function(directory, repositoryUrl){
+	return cloneRepository(directory, repositoryUrl.slice('git+'.length));
+};
+
+protocols.file = function(directory, fileLocation){
+	return symlink(fileLocation, directory);
+};
+
+/*
+http & https should target a zip
+protocols.http = protocols.https = function(directory, url){
+
+};
+*/
+
+function fetchRegistry(module){
+	var location = module.location;
+	var address = location.href.slice('file://'.length);
+	var projectLocation = address;
+	var projectFolder = path.dirname(address);
+	var projectModuleFolder = path.dirname(projectFolder);
+
 	var base = ENV.baseUrl.slice('file://'.length);
+	base = path.resolve(module.meta.registryBase, base);
+	var relativeModuleLocation = path.relative(base, address);
+	var localLocation = path.dirname(base) + '/' + relativeModuleLocation;
+	var localFolder = path.dirname(localLocation);
+	var localModuleFolder = path.dirname(localFolder);
 
-	var relativeModuleLocation = path.relative(base, location);
-	var localModule = path.dirname(base) + '/' + relativeModuleLocation;
-	var localModuleDirectory = path.dirname(localModule);
-	var localModuleFolder = path.dirname(localModuleDirectory);
-	var projectModule = location;
-	var projectModuleDirectory = path.dirname(location);
-	var projectModuleFolder = path.dirname(projectModuleDirectory);
-	var giturl = module.meta.repository;
+	var registry = ENV.parseURI(module.meta.registry);
+	var registryLocation = registry.href;
+	var registryProtocol = registry.protocol.slice(0, -1);
 
-	console.log('local module location: ', localModule);
-	console.log('project module location', projectModule);
-	console.log('git module location', giturl);
+	if( false === registryProtocol in protocols ){
+		throw new Error('the registry ' + registryProtocol + ' is not supported');
+	}
 
-	return hasDirectory(localModuleDirectory).then(function(has){
+	debug('project module location', projectLocation);
+	debug('local module location: ', localLocation);
+	debug('registry module location', registryLocation);
+
+	return hasDirectory(localFolder).then(function(has){
 		if( has ){
-			debug(module, 'has local directory');
-			return symlink(localModuleDirectory, projectModuleDirectory);
+			debug(location, 'has local directory');
+			return symlink(localFolder, projectFolder);
 		}
 		else{
 			return createDirectoriesTo(localModuleFolder).then(function(){
-				return cloneRepository(localModuleFolder, giturl);
+				return protocols[registryProtocol](localModuleFolder, registryLocation);
 			}).then(function(){
-				return symlink(localModuleDirectory, projectModuleDirectory);
+				return symlink(localFolder, projectFolder);
 			});
 		}
-	}).then(function(){
-		return ENV.fetch(module);
 	});
 }
 
@@ -182,36 +214,7 @@ ENV.fetch = function(module){
 	return fetch.call(this, module).catch(function(error){
 		if( error && error.code === 'MODULE_NOT_FOUND' && module.meta.registry && !module.meta.installed ){
 			module.meta.installed = true;
-
-			var registry = ENV.parseURI(module.meta.registry);
-			var location = module.location;
-			var protocol = registry.protocol.slice(1);
-
-			// git clone + symlink
-			if( protocol === 'git+https' ){
-				return git(module);
-			}
-			// download the file + save it on filesystem
-			else if( protocol === 'http' || protocol === 'https' ){
-				module.location = registry;
-				return ENV.fetch(module).then(function(source){
-					module.location = location;
-					module.source = source;
-					// écrit le fichier sur le filesystem
-					return filesystem('writeFile', module.address.slice('file://'.length), source);
-				}).then(function(){
-					return module.source;
-				});
-			}
-			// symlink the local file
-			else if( protocol === 'file' ){
-				return symlink(registry.href, location.href).then(function(){
-					return ENV.fetch(module);
-				});
-			}
-			else{
-				throw new Error('the registry ' + protocol + ' is not supported');
-			}
+			return fetchRegistry(module);
 		}
 		else{
 			return Promise.reject(error);
