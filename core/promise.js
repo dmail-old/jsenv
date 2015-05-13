@@ -121,7 +121,7 @@
 				this.unhandled = global.setImmediate(function(){
 					this.unhandled = null;
 					if( !this.handled ){ // then() still never called
-						if( ENV.platform.name === 'node' ){
+						if( ENV.platform.name === 'server' ){
 							if( process.listeners('unhandledRejection').length === 0 ){
 								var mess = value instanceof Error ? value.stack : value;
 								console.log('possibly unhandled rejection "' + mess + '" for promise', this);

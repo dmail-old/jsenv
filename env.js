@@ -251,16 +251,12 @@ ENV.locate('lodash/map'); /js/lodash/map.js
 		},
 
 		include: function(name){
-			var normalizedName = this.loader.normalize(name, this.name, this.address);
+			var normalizedName = this.loader.normalize(name, this.name, this.address), module;
 
-			if( false === this.loader.has(normalizedName) ){
+			module = this.loader.get(normalizedName);
+
+			if( module == null ){
 				throw new Error(this.name + ' includes ' + normalizedName + ', but the module cannot be found');
-			}
-
-			var module = this.loader.get(normalizedName);
-
-			if( module.status != 'executed' ){
-				throw new Error(this.name + ' includes ' + normalizedName + ', but the module was not executed');
 			}
 
 			return module.value;
@@ -274,9 +270,7 @@ ENV.locate('lodash/map'); /js/lodash/map.js
 				this.fetch,
 				this.translate,
 				this.collectDependencies,
-				this.loadDependencies,
-				this.parse,
-				this.execute
+				this.loadDependencies
 			].forEach(function(method){
 				promise = promise.then(method.bind(this));
 			}, this);
@@ -352,10 +346,17 @@ ENV.locate('lodash/map'); /js/lodash/map.js
 		},
 
 		get: function(normalizedName){
+			var module;
+
 			if( this.has(normalizedName) ){
-				return this.modules[normalizedName];
+				module = this.modules[normalizedName];
+
+				// ensure module is evaluated (parsed & executed
+				module.parse();
+				module.execute();
 			}
-			return undefined;
+
+			return module;
 		},
 
 		has: function(normalizedName){
@@ -531,7 +532,6 @@ ENV.locate('lodash/map'); /js/lodash/map.js
 		baseUrl: null,
 		extension: '.js',
 		configs: [],
-		repositories: {},
 		requirements: [
 			'setImmediate', // because required by promise
 			'Symbol', // because required by iterator
@@ -623,7 +623,6 @@ ENV.locate('lodash/map'); /js/lodash/map.js
 				'getSupportedProtocols',
 				'getBaseUrl',
 				'getRequirement',
-				'getSupportedRepositories',
 				'setup'
 			].forEach(function(name){
 				this[name] = this.platform[name];
@@ -632,7 +631,6 @@ ENV.locate('lodash/map'); /js/lodash/map.js
 			this.global = this.getGlobal();
 			this.global[this.globalName] = this;
 			Object.assign(this.protocols, this.getSupportedProtocols());
-			Object.assign(this.repositories, this.getSupportedRepositories());
 			this.baseUrl = this.getBaseUrl();
 
 			this.polyfillRequirements();
@@ -721,7 +719,10 @@ ENV.locate('lodash/map'); /js/lodash/map.js
 					port     : match[5] || '',
 					pathname : match[6] || '',
 					search   : match[7] || '',
-					hash     : match[8] || ''
+					hash     : match[8] || '',
+					toString: function(){
+						return this.href;
+					}
 				};
 			}
 
@@ -781,27 +782,46 @@ ENV.locate('lodash/map'); /js/lodash/map.js
 			return toAbsoluteURL;
 		})(),
 
-		config: function(path, properties){
-			this.configs.push({
-				path: path,
-				properties: properties
-			});
-			// keep config sorted (the most specific config is the last applied)
-			this.configs = this.configs.sort(function(a, b){
-				return (a.path ? a.path.length : 0) - (b.path ? b.path.length : 0);
-			});
+		getConfig: function(selector){
+			var configs = this.configs, i = 0, j = configs.length, config;
+
+			for(;i<j;i++){
+				config = configs[i];
+				if( config.selector === selector ) break;
+				else config = null;
+			}
+
+			return config;
 		},
 
-		matchPath: function(name, path){
-			var starIndex = path.indexOf('*'), match = false;
+		config: function(selector, properties){
+			var config = this.getConfig(selector);
+
+			if( config ){
+				Object.assign(config.properties, properties);
+			}
+			else{
+				this.configs.push({
+					selector: selector,
+					properties: properties
+				});
+				// keep config sorted (the most specific config is the last applied)
+				this.configs = this.configs.sort(function(a, b){
+					return (a.path ? a.path.length : 0) - (b.path ? b.path.length : 0);
+				});
+			}
+		},
+
+		matchSelector: function(name, selector){
+			var starIndex = selector.indexOf('*'), match = false;
 
 			if( starIndex === -1 ){
-				if( name === path ){
+				if( name === selector ){
 					match =  true;
 				}
 			}
 			else{
-				var left = path.slice(0, starIndex), right = path.slice(starIndex + 1);
+				var left = selector.slice(0, starIndex), right = selector.slice(starIndex + 1);
 				var nameLeft = name.slice(0, left.length), nameRight = name.slice(name.length - right.length);
 
 				if( left == nameLeft && right == nameRight ){
@@ -816,7 +836,7 @@ ENV.locate('lodash/map'); /js/lodash/map.js
 			var meta = {path: normalizedName}, match;
 
 			this.configs.forEach(function(config){
-				match = this.matchPath(normalizedName, config.path);
+				match = this.matchSelector(normalizedName, config.selector);
 				if( match ){
 					Object.assign(meta, config.properties);
 					if( typeof match === 'string' ){
@@ -873,29 +893,6 @@ ENV.locate('lodash/map'); /js/lodash/map.js
 			return error;
 		},
 
-		install: function(module){
-			if( !module.installed && module.meta.repository ){
-				module.installed = true;
-
-				var repository = module.meta.repository;
-				var type = '';
-
-				if( repository.slice(0, 'git://'.length) == 'git://' || repository.slice(-'.git'.length) == '.git' ){
-					type = 'git';
-				}
-
-				if( type in this.repositories ){
-					return this.repositories[type].call(this, module);
-				}
-				else{
-					throw new Error('unsupported repository ' + repository);
-				}
-			}
-			else{
-				throw this.createModuleNotFoundError(module.location);
-			}
-		},
-
 		fetch: function(module){
 			var location = module.location;
 			var protocol = location.protocol.slice(0, -1); // remove ':' from 'file:'
@@ -907,7 +904,7 @@ ENV.locate('lodash/map'); /js/lodash/map.js
 
 			return this.protocols[protocol](href).then(function(response){
 				if( response.status === 404 ){
-					return this.install(module);
+					throw this.createModuleNotFoundError(module.location);
 				}
 				else if( response.status != 200 ){
 					throw new Error('fetch failed with response status: ' + response.status);
@@ -931,7 +928,7 @@ ENV.locate('lodash/map'); /js/lodash/map.js
 				return String(str).replace(safe ? reBlockIgnore : reBlock, '');
 			}
 
-			var reDependency = /(?:^|;|\s+)include\(['"]([\w\W]+?)['"]\)/gm;
+			var reDependency = /(?:^|;|\s+|ENV\.)include\(['"]([^'"]+)['"]\)/gm;
 			function collectIncludeCalls(str){
 				str = stripLineComment(stripBlockComment(str));
 
@@ -1055,6 +1052,16 @@ ENV.locate('lodash/map'); /js/lodash/map.js
 
 		setup: function(){
 			function ready(){
+				var scripts = document.getElementsByTagName('script'), i = 0, j = scripts.length, script;
+				for(;i<j;i++){
+					script = scripts[i];
+					if( script.type === 'module' ){
+						ENV.module(script.innerHTML.slice(1)).catch(function(error){
+							setTimeout(function(){ throw error; });
+						});
+					}
+				}
+
 				if( ENV.mainModule ){
 					ENV.include(ENV.mainModule).catch(console.error);
 				}
@@ -1076,7 +1083,7 @@ ENV.locate('lodash/map'); /js/lodash/map.js
 		}
 	});
 
-	ENV.definePlatform('node', {
+	ENV.definePlatform('server', {
 		test: function(){
 			return typeof process !== 'undefined';
 		},
@@ -1183,159 +1190,6 @@ ENV.locate('lodash/map'); /js/lodash/map.js
 			}
 
 			done(error);
-		},
-
-		getSupportedRepositories: function(module){
-			var child_process = require('child_process');
-			var path = require('path');
-			var fs = require('fs');
-
-			function filesystem(method){
-				var args = Array.prototype.slice.call(arguments, 1);
-
-				return new Promise(function(resolve, reject){
-					args.push(function(error, result){
-						if( error ){
-							reject(error);
-						}
-						else{
-							resolve(result);
-						}
-					});
-
-					fs[method].apply(fs, args);
-				});
-			}
-
-			function hasDirectory(dir){
-				return filesystem('stat', dir).then(function(stat){
-					return stat.isDirectory();
-				}).catch(function(error){
-					if( error && error.code == 'ENOENT' ) return false;
-					return Promise.reject(error);
-				});
-			}
-
-			function createDirectory(dir){
-				return hasDirectory(dir).then(function(has){
-					if( has ) return;
-					console.log('create directory', dir);
-					return filesystem('mkdir', dir);
-				});
-			}
-
-			function createDirectoriesTo(dir){
-				var directories = dir.split('/');
-
-				return directories.reduce(function(previous, directory, index){
-					var directoryLocation = directories.slice(0, index + 1).join('/');
-
-					return previous.then(function(){
-						return createDirectory(directoryLocation);
-					});
-				}, Promise.resolve());
-			}
-
-			function cloneRepository(dir, repositoryUrl){
-				debug('cd', dir, 'git clone', repositoryUrl);
-
-				return new Promise(function(resolve, reject){
-					child_process.exec('git clone ' + repositoryUrl, {
-						cwd: dir
-					}, function(error, stdout, stderr){
-						if( error ){
-							reject(error);
-						}
-						else{
-							console.log(stdout || stderr);
-							resolve();
-						}
-					});
-				});
-			}
-
-			function lstat(dir){
-				return filesystem('lstat', dir);
-			}
-
-			function symlink(sourceDir, destinationDir){
-				debug('symlink', sourceDir, destinationDir);
-
-				return lstat(destinationDir).then(function(stat){
-					// check the existing symbolic link
-					if( stat.isSymbolicLink() ){
-						return filesystem('readlink', destinationDir).then(function(link){
-							if( link != destinationDir ){
-								debug('remove previous link to', destinationDir);
-								return filesystem('unlink', destinationDir);
-							}
-							else{
-								var error = new Error(destinationDir + 'already linked to ' + sourceDir);
-								error.code = 'EEXIST';
-								throw error;
-							}
-						});
-					}
-					// a folder exists, but this folder does not contain
-					// the desired module, not supposed to happen
-					else{
-						throw new Error(destinationDir, 'exists, please delete this folder');
-					}
-				// create directories leading to the symlink
-				}).catch(function(error){
-					if( error && error.code == 'ENOENT' ){
-						return createDirectoriesTo(path.dirname(destinationDir));
-					}
-					return Promise.reject(error);
-				// do symlink
-				}).then(function(){
-					return filesystem('symlink', sourceDir, destinationDir, 'junction');
-				// eexist is not an error
-				}).catch(function(error){
-					if( error && error.code === 'EEXIST'){
-						return null;
-					}
-					return Promise.reject(error);
-				});
-			}
-
-			var repositories = {};
-
-			repositories.git = function(module){
-				var location = module.location.href.slice('file://'.length);
-				var base = this.baseUrl.slice('file://'.length);
-
-				var relativeModuleLocation = path.relative(base, location);
-				var localModule = path.dirname(base) + '/' + relativeModuleLocation;
-				var localModuleDirectory = path.dirname(localModule);
-				var localModuleFolder = path.dirname(localModuleDirectory);
-				var projectModule = location;
-				var projectModuleDirectory = path.dirname(location);
-				var projectModuleFolder = path.dirname(projectModuleDirectory);
-				var giturl = module.meta.repository;
-
-				console.log('local module location: ', localModule);
-				console.log('project module location', projectModule);
-				console.log('git module location', giturl);
-
-				return hasDirectory(localModuleDirectory).then(function(has){
-					if( has ){
-						debug(module, 'has local directory');
-						return symlink(localModuleDirectory, projectModuleDirectory);
-					}
-					else{
-						return createDirectoriesTo(localModuleFolder).then(function(){
-							return cloneRepository(localModuleFolder, giturl);
-						}).then(function(){
-							return symlink(localModuleDirectory, projectModuleDirectory);
-						});
-					}
-				}).then(function(){
-					return this.fetch(module);
-				}.bind(this));
-			};
-
-			return repositories;
 		},
 
 		setup: function(){
