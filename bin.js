@@ -212,28 +212,28 @@ protocols.http = protocols.https = function(directory, url){
 };
 */
 
-function fetchRegistry(module){
-	var registry = ENV.parseURI(module.meta.registry);
-	var registryProtocol = registry.protocol.slice(0, -1);
+function fetchOrigin(module){
+	var origin = ENV.parseURI(module.meta.origin);
+	var originProtocol = origin.protocol.slice(0, -1);
 
-	if( false === registryProtocol in protocols ){
-		throw new Error('the registry ' + registryProtocol + ' is not supported');
+	if( false === originProtocol in protocols ){
+		throw new Error('the origin protocol ' + originProtocol + ' is not supported');
 	}
 
-	var protocol = protocols[registryProtocol];
+	var protocol = protocols[originProtocol];
 	var projectName = protocol.getProjectName(module.location.href);
 	var localName = protocol.getLocalName(projectName);
-	var registryName = registry.href;
+	var originName = origin.href;
 
 	debug('project name', projectName);
 	debug('local name: ', localName);
-	debug('registry name', registryName);
+	debug('origin name', originName);
 
-	return protocol.fetch(localName, registryName).then(function(){
+	return protocol.fetch(localName, originName).then(function(){
 	// symlink
 		return symlink(localName, projectName);
 	}).then(function(){
-	// now it has been fetched from registry, refetch "locally"
+	// now it has been fetched from origin, refetch "locally"
 		return ENV.fetch(module);
 	});
 }
@@ -241,9 +241,9 @@ function fetchRegistry(module){
 var fetch = ENV.fetch;
 ENV.fetch = function(module){
 	return fetch.call(this, module).catch(function(error){
-		if( error && error.code === 'MODULE_NOT_FOUND' && module.meta.registry && !module.meta.installed ){
+		if( error && error.code === 'MODULE_NOT_FOUND' && module.meta.origin && !module.meta.installed ){
 			module.meta.installed = true;
-			return fetchRegistry(module);
+			return fetchOrigin(module);
 		}
 		else{
 			return Promise.reject(error);
