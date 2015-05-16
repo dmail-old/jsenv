@@ -19,26 +19,54 @@ ENV.locate('lodash/map'); /js/lodash/map.js
 
 */
 
-(function(){
-	if( !Object.assign ){
-		Object.assign = function(object){
-			var i = 1, j = arguments.length, owner, keys, n, m, key;
+if( !Object.assign ){
+	Object.assign = function(object){
+		var i = 1, j = arguments.length, owner, keys, n, m, key;
 
-			for(;i<j;i++){
-				owner = arguments[i];
-				if( Object(owner) != owner ) continue;
-				keys = Object.keys(owner);
-				n = 0;
-				m = keys.length;
+		for(;i<j;i++){
+			owner = arguments[i];
+			if( Object(owner) != owner ) continue;
+			keys = Object.keys(owner);
+			n = 0;
+			m = keys.length;
 
-				for(;n<m;n++){
-					key = keys[n];
-					object[key] = owner[key];
-				}
+			for(;n<m;n++){
+				key = keys[n];
+				object[key] = owner[key];
 			}
-		};
+		}
+	};
+}
+
+function forOf(iterable, fn, bind){
+	var method, iterator, next;
+
+	method = iterable[Symbol.iterator];
+
+	if( typeof method !== 'function' ){
+		throw new TypeError(iterable + 'is not iterable');
 	}
 
+	if( typeof fn != 'function' ){
+		throw new TypeError('second argument must be a function');
+	}
+
+	iterator = method.call(iterable);
+	next = iterator.next();
+	while( next.done === false ){
+		if( fn.call(bind, next.value) === true ){
+			if( typeof iterator['return'] === 'function' ){
+				iterator['return']();
+			}
+			break;
+		}
+		next = iterator.next();
+	}
+
+	return this;
+}
+
+(function(){
 	function shortenPath(filepath){
 		return require('path').relative(ENV.baseUrl, filepath);
 	}
@@ -56,8 +84,20 @@ ENV.locate('lodash/map'); /js/lodash/map.js
 		console.log.apply(console, args);
 	}
 
+	function create(proto){
+		proto.constructor.prototype = proto;
+		return proto.constructor;
+	}
+
+	function replace(string, values){
+		return string.replace((/\\?\{([^{}]+)\}/g), function(match, name){
+			if( match.charAt(0) == '\\' ) return match.slice(1);
+			return (values[name] != null) ? values[name] : '';
+		});
+	}
+
 	// object representing an attempt to locate/fetch/translate/parse a module
-	var Module = {
+	var Module = create({
 		loader: null, // loader used to load this module
 		status: null, // loading, loaded, failed
 		meta: null,
@@ -73,7 +113,7 @@ ENV.locate('lodash/map'); /js/lodash/map.js
 		dependents: null, // set from dependencies
 
 		exception: null, // why fetch() failed
-		promise: null, // the promise representing the attempt to load the module
+		promise: null, // the promise representing the attempt to get the module
 
 		constructor: function(loader, normalizedName){
 			var module;
@@ -297,11 +337,9 @@ ENV.locate('lodash/map'); /js/lodash/map.js
 		then: function(onResolve, onReject){
 			return this.toPromise().then(onResolve, onReject);
 		}
-	};
-	Module.constructor.prototype = Module;
-	Module = Module.constructor;
+	});
 
-	var ES6Loader = {
+	var ES6Loader = create({
 		modules: null, // module registry
 
 		constructor: function(options){
@@ -452,11 +490,9 @@ ENV.locate('lodash/map'); /js/lodash/map.js
 				return module;
 			});
 		}
-	};
-	ES6Loader.constructor.prototype = ES6Loader;
-	ES6Loader = ES6Loader.constructor;
+	});
 
-	var Platform = {
+	var Platform = create({
 		constructor: function(name, options){
 			this.name = String(name);
 			if( options ){
@@ -487,37 +523,7 @@ ENV.locate('lodash/map'); /js/lodash/map.js
 		init: function(){
 			// noop
 		}
-	};
-	Platform.constructor.prototype = Platform;
-	Platform = Platform.constructor;
-
-	function forOf(iterable, fn, bind){
-		var method, iterator, next;
-
-		method = iterable[Symbol.iterator];
-
-		if( typeof method !== 'function' ){
-			throw new TypeError(iterable + 'is not iterable');
-		}
-
-		if( typeof fn != 'function' ){
-			throw new TypeError('second argument must be a function');
-		}
-
-		iterator = method.call(iterable);
-		next = iterator.next();
-		while( next.done === false ){
-			if( fn.call(bind, next.value) === true ){
-				if( typeof iterator['return'] === 'function' ){
-					iterator['return']();
-				}
-				break;
-			}
-			next = iterator.next();
-		}
-
-		return this;
-	}
+	});
 
 	var ENV = new ES6Loader({
 		platforms: [],
@@ -600,12 +606,32 @@ ENV.locate('lodash/map'); /js/lodash/map.js
 					}
 					else{
 						debug('get the requirement', requirement);
-						self.getRequirement(requirement, fulFillRequirement);
-					}
+						// '/test.js' mean relative to the root while './test.js' means relative to the base
+						var requirementUrl = '/polyfill/' + requirement + '.js';
+						self.getRequirement(requirementUrl, fulFillRequirement);
+					}					
 				}
 			}
 
 			nextRequirement();
+		},
+
+		setup: function(){
+			// on pourrait utiliser du JSON ptet
+			debug('loading env.global.js');
+
+			// global is required
+			this.include('/env.global.js').then(function(){
+				// local is optionnal
+				debug('loading env.local.js');
+
+				return this.include('/env.local.js').catch(function(error){
+					if( error && error.code === 'MODULE_NOT_FOUND' ) return;
+					return Promise.reject(error);
+				});
+			}.bind(this)).then(function(){
+				this.platform.setup.call(this);
+			});
 		},
 
 		init: function(){
@@ -619,14 +645,48 @@ ENV.locate('lodash/map'); /js/lodash/map.js
 				'getGlobal',
 				'getSupportedProtocols',
 				'getBaseUrl',
-				'getRequirement',
-				'setup'
+				'request',
+				'getRequirement'
 			].forEach(function(name){
 				this[name] = this.platform[name];
 			}, this);
 
 			this.global = this.getGlobal();
 			this.global[this.globalName] = this;
+
+			if( this.request ){
+				this.protocols.http = this.protocols.https = function(url){
+					return this.request(url, {
+						method: 'GET'
+					});
+				};
+				/*
+				live example
+				var giturl = 'https://api.github.com/repos/dmail/argv/contents/index.js?ref=master';
+				var xhr = new XMLHttpRequest();
+
+				xhr.open('GET', giturl);
+				xhr.setRequestHeader('accept', 'application/vnd.github.v3.raw');
+				xhr.send(null);
+				*/
+				this.protocols.git = function(url){
+					var parsed = this.parseURI(url);
+					var giturl = replace('https://api.github.com/repos/{user}/{repo}/contents/{path}{search}', {
+						user: parsed.username,
+						repo: parsed.host,
+						path: parsed.pathname || 'index.js',
+						search: parsed.search
+					});
+
+					return this.request(giturl, {
+						method: 'GET',
+						headers: {
+							'accept': 'application/vnd.github.v3.raw'
+						}
+					});
+				};
+			}
+
 			Object.assign(this.protocols, this.getSupportedProtocols());
 			this.baseUrl = this.getBaseUrl();
 
@@ -976,51 +1036,55 @@ ENV.locate('lodash/map'); /js/lodash/map.js
 			return baseUrl;
 		},
 
+		request: function(url, options){
+			// https://gist.github.com/mmazer/5404301
+			function parseHeaders(headerString){
+				var headers = {}, pairs, pair, index, i, j, key, value;
+
+				if( headerString ){
+					pairs = headerString.split('\u000d\u000a');
+					i = 0;
+					j = pairs.length;
+					for(;i<j;i++){
+						pair = pairs[i];
+						index = pair.indexOf('\u003a\u0020');
+						if( index > 0 ){
+							key = pair.slice(0, index);
+							value = pair.slice(index + 2);
+							headers[key] = value;
+						}
+					}
+				}
+
+				return headers;
+			}
+
+			return new Promise(function(resolve, reject){
+				var xhr = new XMLHttpRequest();
+
+				xhr.open(options.method, url);
+				if( options.headers ){
+					for(var key in options.headers){
+						xhr.setRequestHeader(key, options.headers[key]);
+					}
+				}
+
+				xhr.onreadystatechange = function(){
+					if( xhr.readyState === 4 ){
+						resolve({
+							status: xhr.status,
+							body: xhr.responseText,
+							headers: parseHeaders(xhr.getAllResponseHeaders())
+						});
+					}
+				};			
+				xhr.send(options.body || null);
+			});
+		},
+
 		getSupportedProtocols: function(){
 			var protocols = {};
 
-			protocols.http = (function(){
-				// https://gist.github.com/mmazer/5404301
-				function parseHeaders(headerString){
-					var headers = {}, pairs, pair, index, i, j, key, value;
-
-					if( headerString ){
-						pairs = headerString.split('\u000d\u000a');
-						i = 0;
-						j = pairs.length;
-						for(;i<j;i++){
-							pair = pairs[i];
-							index = pair.indexOf('\u003a\u0020');
-							if( index > 0 ){
-								key = pair.slice(0, index);
-								value = pair.slice(index + 2);
-								headers[key] = value;
-							}
-						}
-					}
-
-					return headers;
-				}
-
-				return function(url){
-					return new Promise(function(resolve, reject){
-						var xhr = new XMLHttpRequest();
-
-						xhr.onreadystatechange = function(){
-							if( xhr.readyState === 4 ){
-								resolve({
-									status: xhr.status,
-									body: xhr.responseText,
-									headers: parseHeaders(xhr.getAllResponseHeaders())
-								});
-							}
-						};
-						xhr.open('GET', url);
-						xhr.send(null);
-					});
-				};
-			})();
-			protocols.https = protocols.http;
 			protocols.file = function(url){
 				return protocols.http(url).then(function(response){
 					// fix for browsers returning status == 0 for local file request
@@ -1035,10 +1099,10 @@ ENV.locate('lodash/map'); /js/lodash/map.js
 		},
 
 		// browser must include script tag with the requirement
-		getRequirement: function(requirement, done){
+		getRequirement: function(url, done){
 			var script = document.createElement('script');
 
-			script.src = this.baseUrl + 'core/' + requirement + '.js';
+			script.src = url;
 			script.type = 'text/javascript';
 			script.onload = function(){
 				done();
@@ -1102,47 +1166,54 @@ ENV.locate('lodash/map'); /js/lodash/map.js
 			return baseUrl;
 		},
 
-		getSupportedProtocols: function(){
+		request: function(url, options){
 			var http = require('http');
 			var https = require('https');
-			function createPromiseForHttpResponse(url, isHttps){
-				return new Promise(function(resolve, reject){
-					var httpRequest = (isHttps ? https : http).request({
-						method: 'GET',
-						url: url,
-						port: isHttps ? 443 : 80
+			var parse = require('url').parse;
+			
+			var parsed = parse(url), secure;
+
+			Object.assign(options, parsed);
+
+			secure = options.protocol === 'https:';
+
+			options.port = secure ? 443 : 80;		
+
+			return new Promise(function(resolve, reject){
+				var httpRequest = (secure ? https : http).request(options);	
+
+				function resolveWithHttpResponse(httpResponse){
+					var buffers = [], length;
+					httpResponse.addListener('data', function(chunk){
+						buffers.push(chunk);
+						length+= chunk.length;
 					});
-
-					function resolveWithHttpResponse(httpResponse){
-						var buffers = [], length;
-						httpResponse.addListener('data', function(chunk){
-							buffers.push(chunk);
-							length+= chunk.length;
+					httpResponse.addListener('end', function(){
+						resolve({
+							status: httpResponse.statusCode,
+							headers: httpResponse.headers,
+							body: Buffer.concat(buffers, length).toString()
 						});
-						httpResponse.addListener('end', function(){
-							resolve({
-								status: httpResponse.statusCode,
-								headers: httpResponse.headers,
-								body: Buffer.concat(buffers, length).toString()
-							});
-						});
-						httpResponse.addListener('error', reject);
-					}
+					});
+					httpResponse.addListener('error', reject);
+				}
 
-					httpRequest.addListener('response', resolveWithHttpResponse);
-					httpRequest.addListener('error', reject);
-					httpRequest.addListener('timeout', reject);
-					httpRequest.addListener('close', reject);
-				});
-			}
+				httpRequest.addListener('response', resolveWithHttpResponse);
+				httpRequest.addListener('error', reject);
+				httpRequest.addListener('timeout', reject);
+				httpRequest.addListener('close', reject);
+			});
+		},
 
+		// For POST, PATCH, PUT, and DELETE requests,
+		// parameters not included in the URL should be encoded as JSON with a Content-Type of ‘application/json’
+		getSupportedProtocols: function(){
 			var protocols = {};
 
-			protocols.http = function(url){
-				return createPromiseForHttpResponse(url, false);
-			};
-			protocols.https = function(url){
-				return createPromiseForHttpResponse(url, true);
+			protocols.http = protocols.https = function(url){
+				return this.request(url, {
+					method: 'GET'
+				});
 			};
 
 			var fs = require('fs');
@@ -1179,11 +1250,11 @@ ENV.locate('lodash/map'); /js/lodash/map.js
 		},
 
 		// in node env requires it
-		getRequirement: function(requirement, done){
+		getRequirement: function(url, done){
 			var error = null;
 
 			try{
-				require('./core/' + requirement + '.js');
+				require(__dirname + '/' + url);
 			}
 			catch(e){
 				error = e;
