@@ -76,7 +76,7 @@ function forOf(iterable, fn, bind){
 
 		args = args.map(function(arg){
 			if( arg instanceof Module ){
-				arg = arg.name ? arg.name : 'anonymous module';
+				arg = arg.address ? arg.address : 'anonymous module';
 			}
 			return arg;
 		});
@@ -621,17 +621,17 @@ function forOf(iterable, fn, bind){
 			debug('loading env.global.js');
 
 			// global is required
-			this.include('/env.global.js').then(function(){
-				// local is optionnal
+			this.include('env.global.js').then(function(){
 				debug('loading env.local.js');
 
-				return this.include('/env.local.js').catch(function(error){
+				return this.include('env.local.js').catch(function(error){
 					if( error && error.code === 'MODULE_NOT_FOUND' ) return;
 					return Promise.reject(error);
 				});
 			}.bind(this)).then(function(){
+				console.log('setup platform', this.platform.name);
 				this.platform.setup.call(this);
-			});
+			}.bind(this));
 		},
 
 		init: function(){
@@ -669,19 +669,20 @@ function forOf(iterable, fn, bind){
 				xhr.setRequestHeader('accept', 'application/vnd.github.v3.raw');
 				xhr.send(null);
 				*/
-				this.protocols.git = function(url){
+				this.protocols.github = function(url){
 					var parsed = this.parseURI(url);
-					var giturl = replace('https://api.github.com/repos/{user}/{repo}/contents/{path}{search}', {
+					var giturl = replace('https://api.github.com/repos/{user}/{repo}/contents{path}{search}', {
 						user: parsed.username,
 						repo: parsed.host,
-						path: parsed.pathname || 'index.js',
+						path: parsed.pathname || '/index.js',
 						search: parsed.search
 					});
 
 					return this.request(giturl, {
 						method: 'GET',
 						headers: {
-							'accept': 'application/vnd.github.v3.raw'
+							'accept': 'application/vnd.github.v3.raw',							
+							'User-Agent': 'env/' + this.version// https://developer.github.com/changes/2013-04-24-user-agent-required/
 						}
 					});
 				};
@@ -693,10 +694,16 @@ function forOf(iterable, fn, bind){
 			this.polyfillRequirements();
 		},
 
+		// TODO : https://github.com/systemjs/systemjs/blob/master/lib/extension-map.js
 		normalize: function(name, contextName, contextAddress){
+			contextName = this.findMeta(contextName).path;
+
 			if( typeof name != 'string' ){
 				throw new TypeError('Module name must be a string');
 			}
+
+			// normalize('./parse', 'dmail/argv', 'github://dmail@argv')
+			// devient -> github://parse au lieu de github://dmail@argv/parse.js
 
 			var segments = name.split('/');
 
@@ -745,7 +752,7 @@ function forOf(iterable, fn, bind){
 
 			// build the full module name
 			var normalizedParts = [];
-			var parentParts = (contextAddress || contextName || '').split('/');
+			var parentParts = (/*contextAddress ||*/contextName || '').split('/');
 			var normalizedLen = parentParts.length - 1 - dotdots;
 
 			normalizedParts = normalizedParts.concat(parentParts.splice(0, parentParts.length - 1 - dotdots));
@@ -753,15 +760,19 @@ function forOf(iterable, fn, bind){
 
 			debug('normalizing', name, contextName, contextAddress, 'to', normalizedParts.join('/'));
 
-			return normalizedParts.join('/');
+			var normalizedName = normalizedParts.join('/');
+
+			return normalizedName;
 		},
 
 		// https://gist.github.com/Yaffle/1088850
+		// https://github.com/Polymer/URL/blob/master/url.js
 		parseURI: function(url){
 			url = String(url);
 			url = url.replace(/^\s+|\s+$/g, ''); // trim
 
-			var regex = /^([^:\/?#]+:)?(\/\/(?:[^:@\/?#]*(?::[^:@\/?#]*)?@)?(([^:\/?#]*)(?::(\d*))?))?([^?#]*)(\?[^#]*)?(#[\s\S]*)?/;
+			var regex = /^([^:\/?#]+:)?(?:\/\/(?:([^:@\/?#]*)(?::([^:@\/?#]*))?@)?(([^:\/?#]*)(?::(\d*))?))?([^?#]*)(\?[^#]*)?(#[\s\S]*)?/;
+			// /^([^:\/?#]+:)?(\/\/(?:[^:@\/?#]*(?::[^:@\/?#]*)?@)?(([^:\/?#]*)(?::(\d*))?))?([^?#]*)(\?[^#]*)?(#[\s\S]*)?/;
 			var match = url.match(regex);
 			// authority = '//' + user + ':' + pass '@' + hostname + ':' port
 			var parsed = null;
@@ -770,17 +781,22 @@ function forOf(iterable, fn, bind){
 				parsed = {
 					href     : match[0] || '',
 					protocol : match[1] || '',
-					authority: match[2] || '',
-					host     : match[3] || '',
-					hostname : match[4] || '',
-					port     : match[5] || '',
-					pathname : match[6] || '',
-					search   : match[7] || '',
-					hash     : match[8] || '',
-					toString: function(){
-						return this.href;
-					}
+					username : match[2] || '',
+					password : match[3] || '',
+					host     : match[4] || '',
+					hostname : match[5] || '',
+					port     : match[6] || '',
+					pathname : match[7] || '',
+					search   : match[8] || '',
+					hash     : match[9] || '',
+					toString: function(){ return this.href; }
 				};
+
+				parsed.authority = '//' +
+				(parsed.username ? parsed.username + (parsed.password ? ':' + parsed.password : '') + '@' : '') +
+				parsed.host +
+				(parsed.port ? ':' + parsed.port : '');
+
 			}
 
 			return parsed;
@@ -788,6 +804,7 @@ function forOf(iterable, fn, bind){
 
 		toAbsoluteURL: (function(){
 			function forceExtension(pathname, extension){
+				return pathname;
 				if( pathname.slice(-(extension.length)) != extension ){
 					pathname+= extension;
 				}
@@ -959,7 +976,7 @@ function forOf(iterable, fn, bind){
 				throw new Error('The protocol "' + protocol + '" is not supported');
 			}
 
-			return this.protocols[protocol](href).then(function(response){
+			return this.protocols[protocol].call(this, href).then(function(response){
 				if( response.status === 404 ){
 					throw this.createModuleNotFoundError(module.location);
 				}
@@ -1182,6 +1199,8 @@ function forOf(iterable, fn, bind){
 			return new Promise(function(resolve, reject){
 				var httpRequest = (secure ? https : http).request(options);	
 
+				console.log(options.method, url);
+
 				function resolveWithHttpResponse(httpResponse){
 					var buffers = [], length;
 					httpResponse.addListener('data', function(chunk){
@@ -1202,6 +1221,19 @@ function forOf(iterable, fn, bind){
 				httpRequest.addListener('error', reject);
 				httpRequest.addListener('timeout', reject);
 				httpRequest.addListener('close', reject);
+
+				if( options.body ){
+					httpRequest.write(options.body);
+				}
+				else{
+					httpRequest.end();
+				}
+
+				// timeout
+				setTimeout(function(){ reject(new Error("Timeout")); }, 20000);
+			}).catch(function(error){
+				console.log('http request error', error);
+				throw error;
 			});
 		},
 
@@ -1266,6 +1298,7 @@ function forOf(iterable, fn, bind){
 		setup: function(){
 			if( require.main === module && process.argv.length > 2 ){
 				var name = String(process.argv[2]);
+				debug('runasmain', name);
 				this.include(name).catch(function(error){
 					console.error(error.stack);
 				});
