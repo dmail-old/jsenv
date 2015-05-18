@@ -17,6 +17,15 @@ ENV.paths['lodash/*'] = '/js/lodash/*.js';
 ENV.locate('lodash'); /js/lodash.js
 ENV.locate('lodash/map'); /js/lodash/map.js
 
+Lorsque j'ouvre index.html je dois être capble de localiser env et polyfill
+On pourrait symlink env (mais pas obligé on peut aussi avori le dossier env direct)
+
+Du coup y'aurait deux manière de lancer env, depuis la console:
+env fichier
+ou
+env build fichier (crée le index.html + symlink env)
+
+
 */
 
 if( !Object.assign ){
@@ -76,7 +85,7 @@ function forOf(iterable, fn, bind){
 
 		args = args.map(function(arg){
 			if( arg instanceof Module ){
-				arg = arg.address ? arg.address : 'anonymous module';
+				arg = arg.name ? String(arg.name) : 'anonymous module';
 			}
 			return arg;
 		});
@@ -459,17 +468,24 @@ function forOf(iterable, fn, bind){
 		},
 
 		// execute a top level anonymous module, not registering it
-		module: function(source, options){
+		module: function(body, options){
 			var module = this.createModule();
 
 			// prevent locate()
 			if( options && options.address ){
 				module.address = options.address;
 			}
-			// prevent fetch()
-			module.source = source;
+			else{
+				module.address = '';
+			}
+			// prevent fetch() but not translate
+			module.body = body;
+
+			console.log('body of anonymous module is', body);
 
 			return module.then(function(){
+				module.parse();
+				module.execute();
 				return module;
 			});
 		},
@@ -493,15 +509,15 @@ function forOf(iterable, fn, bind){
 	});
 
 	var Platform = create({
-		constructor: function(name, options){
-			this.name = String(name);
+		constructor: function(type, options){
+			this.type = String(type);
 			if( options ){
 				Object.assign(this, options);
 			}
 		},
 
 		toString: function(){
-			return '[Platform ' + this.name + ']';
+			return '[Platform ' + this.type + ']';
 		},
 
 		getGlobal: function(){
@@ -518,10 +534,6 @@ function forOf(iterable, fn, bind){
 
 		setup: function(){
 			// noop
-		},
-
-		init: function(){
-			// noop
 		}
 	});
 
@@ -536,18 +548,19 @@ function forOf(iterable, fn, bind){
 		extension: '.js',
 		configs: [],
 		requirements: [
+			'URI',
 			'setImmediate', // because required by promise
 			'Symbol', // because required by iterator
 			'Iterator', // because required by promise.all
 			'Promise' // because it's amazing
 		],
 
-		createPlatform: function(name, options){
-			return new Platform(name, options);
+		createPlatform: function(type, options){
+			return new Platform(type, options);
 		},
 
-		definePlatform: function(name, options){
-			var platform = this.createPlatform(name, options);
+		definePlatform: function(type, options){
+			var platform = this.createPlatform(type, options);
 			this.platforms.push(platform);
 			return platform;
 		},
@@ -572,8 +585,8 @@ function forOf(iterable, fn, bind){
 			return requirement in this.global;
 		},
 
-		getRequirement: function(){
-			throw new Error('getRequirement() not implemented');
+		getRequirement: function(scriptUrl, done){
+			return this.platform.loadScript(scriptUrl, done);
 		},
 
 		polyfillRequirements: function(){
@@ -607,9 +620,9 @@ function forOf(iterable, fn, bind){
 					else{
 						debug('get the requirement', requirement);
 						// '/test.js' mean relative to the root while './test.js' means relative to the base
-						var requirementUrl = '/polyfill/' + requirement + '.js';
+						var requirementUrl = self.platform.dirname + '/polyfill/' + requirement + '.js';
 						self.getRequirement(requirementUrl, fulFillRequirement);
-					}					
+					}
 				}
 			}
 
@@ -634,6 +647,42 @@ function forOf(iterable, fn, bind){
 			}.bind(this));
 		},
 
+		httpRequest: function(url){
+			return this.platform.request(url, {
+				method: 'GET'
+			});
+		},
+
+		/*
+		live example
+		var giturl = 'https://api.github.com/repos/dmail/argv/contents/index.js?ref=master';
+		var xhr = new XMLHttpRequest();
+		var date = new Date();
+		date.setMonth(0);
+
+		xhr.open('GET', giturl);
+		xhr.setRequestHeader('accept', 'application/vnd.github.v3.raw');
+		xhr.setRequestHeader('if-modified-since', date.toUTCString());
+		xhr.send(null);
+		*/
+		githubRequest: function(url){
+			var parsed = new URI(url);
+			var giturl = replace('https://api.github.com/repos/{user}/{repo}/contents{path}{search}', {
+				user: parsed.username,
+				repo: parsed.host,
+				path: parsed.pathname || '/index.js',
+				search: parsed.search
+			});
+
+			return this.platform.request(giturl, {
+				method: 'GET',
+				headers: {
+					'accept': 'application/vnd.github.v3.raw',
+					'User-Agent': 'env/' + this.version// https://developer.github.com/changes/2013-04-24-user-agent-required/
+				}
+			});
+		},
+
 		init: function(){
 			this.platform = this.findPlatform();
 
@@ -641,55 +690,28 @@ function forOf(iterable, fn, bind){
 				throw new Error('your javascript environment in not supported');
 			}
 
-			[
-				'getGlobal',
-				'getSupportedProtocols',
-				'getBaseUrl',
-				'request',
-				'getRequirement'
-			].forEach(function(name){
-				this[name] = this.platform[name];
-			}, this);
+			this.platform.name = this.platform.getName();
+			this.platform.version = this.platform.getVersion();
 
-			this.global = this.getGlobal();
+			debug('platform :', this.platform.type, '(', this.platform.name, this.platform.version, ')');
+
+			this.platform.global = this.platform.getGlobal();
+			this.platform.protocols = this.platform.getSupportedProtocols();
+			this.platform.baseURL = this.platform.getBaseUrl();
+			this.platform.filename = this.platform.getSrc();
+			this.platform.dirname = this.platform.filename.slice(0, this.platform.filename.lastIndexOf('/'));
+
+			this.global = this.platform.global;
 			this.global[this.globalName] = this;
+			//this.request = this.platform.request.bind(this);
 
-			if( this.request ){
-				this.protocols.http = this.protocols.https = function(url){
-					return this.request(url, {
-						method: 'GET'
-					});
-				};
-				/*
-				live example
-				var giturl = 'https://api.github.com/repos/dmail/argv/contents/index.js?ref=master';
-				var xhr = new XMLHttpRequest();
-
-				xhr.open('GET', giturl);
-				xhr.setRequestHeader('accept', 'application/vnd.github.v3.raw');
-				xhr.send(null);
-				*/
-				this.protocols.github = function(url){
-					var parsed = this.parseURI(url);
-					var giturl = replace('https://api.github.com/repos/{user}/{repo}/contents{path}{search}', {
-						user: parsed.username,
-						repo: parsed.host,
-						path: parsed.pathname || '/index.js',
-						search: parsed.search
-					});
-
-					return this.request(giturl, {
-						method: 'GET',
-						headers: {
-							'accept': 'application/vnd.github.v3.raw',							
-							'User-Agent': 'env/' + this.version// https://developer.github.com/changes/2013-04-24-user-agent-required/
-						}
-					});
-				};
+			if( this.platform.request ){
+				this.protocols.http = this.protocols.https = this.httpRequest;
+				this.protocols.github = this.githubRequest;
 			}
 
-			Object.assign(this.protocols, this.getSupportedProtocols());
-			this.baseUrl = this.getBaseUrl();
+			Object.assign(this.protocols, this.platform.protocols);
+			this.baseUrl = this.platform.baseURL;
 
 			this.polyfillRequirements();
 		},
@@ -746,115 +768,27 @@ function forOf(iterable, fn, bind){
 				}
 			}
 
-			if( !rel ){
-				return name;
+			var normalizedName;
+
+			if( rel ){
+				// build the full module name
+				var normalizedParts = [];
+				var parentParts = (/*contextAddress ||*/contextName || '').split('/');
+				var normalizedLen = parentParts.length - 1 - dotdots;
+
+				normalizedParts = normalizedParts.concat(parentParts.splice(0, parentParts.length - 1 - dotdots));
+				normalizedParts = normalizedParts.concat(segments.splice(i, segments.length - i));
+
+				normalizedName = normalizedParts.join('/');
+			}
+			else{
+				normalizedName = name;
 			}
 
-			// build the full module name
-			var normalizedParts = [];
-			var parentParts = (/*contextAddress ||*/contextName || '').split('/');
-			var normalizedLen = parentParts.length - 1 - dotdots;
-
-			normalizedParts = normalizedParts.concat(parentParts.splice(0, parentParts.length - 1 - dotdots));
-			normalizedParts = normalizedParts.concat(segments.splice(i, segments.length - i));
-
-			debug('normalizing', name, contextName, contextAddress, 'to', normalizedParts.join('/'));
-
-			var normalizedName = normalizedParts.join('/');
+			debug('normalizing', name, contextName, String(contextAddress), 'to', normalizedName);
 
 			return normalizedName;
 		},
-
-		// https://gist.github.com/Yaffle/1088850
-		// https://github.com/Polymer/URL/blob/master/url.js
-		parseURI: function(url){
-			url = String(url);
-			url = url.replace(/^\s+|\s+$/g, ''); // trim
-
-			var regex = /^([^:\/?#]+:)?(?:\/\/(?:([^:@\/?#]*)(?::([^:@\/?#]*))?@)?(([^:\/?#]*)(?::(\d*))?))?([^?#]*)(\?[^#]*)?(#[\s\S]*)?/;
-			// /^([^:\/?#]+:)?(\/\/(?:[^:@\/?#]*(?::[^:@\/?#]*)?@)?(([^:\/?#]*)(?::(\d*))?))?([^?#]*)(\?[^#]*)?(#[\s\S]*)?/;
-			var match = url.match(regex);
-			// authority = '//' + user + ':' + pass '@' + hostname + ':' port
-			var parsed = null;
-
-			if( match ){
-				parsed = {
-					href     : match[0] || '',
-					protocol : match[1] || '',
-					username : match[2] || '',
-					password : match[3] || '',
-					host     : match[4] || '',
-					hostname : match[5] || '',
-					port     : match[6] || '',
-					pathname : match[7] || '',
-					search   : match[8] || '',
-					hash     : match[9] || '',
-					toString: function(){ return this.href; }
-				};
-
-				parsed.authority = '//' +
-				(parsed.username ? parsed.username + (parsed.password ? ':' + parsed.password : '') + '@' : '') +
-				parsed.host +
-				(parsed.port ? ':' + parsed.port : '');
-
-			}
-
-			return parsed;
-		},
-
-		toAbsoluteURL: (function(){
-			function forceExtension(pathname, extension){
-				return pathname;
-				if( pathname.slice(-(extension.length)) != extension ){
-					pathname+= extension;
-				}
-				return pathname;
-			}
-
-			function removeDotSegments(input){
-				var output = [];
-
-				input
-				.replace(/^(\.\.?(\/|$))+/, '')
-				.replace(/\/(\.(\/|$))+/g, '/')
-				.replace(/\/\.\.$/, '/../')
-				.replace(/\/?[^\/]*/g, function(p){
-					if( p === '/..' )
-						output.pop();
-					else
-						output.push(p);
-				});
-
-				return output.join('').replace(/^\//, input.charAt(0) === '/' ? '/' : '');
-			}
-
-			function toAbsoluteURL(base, href){
-				href = this.parseURI(href || '');
-				base = this.parseURI(base || '');
-
-				var absoluteUrl = null;
-
-				if( href && base ){
-					absoluteUrl =
-					(href.protocol || base.protocol) +
-					(href.protocol || href.authority ? href.authority : base.authority) +
-					forceExtension(
-						removeDotSegments(
-							href.protocol || href.authority || href.pathname.charAt(0) === '/' ? href.pathname :
-							(href.pathname ? ((base.authority && !base.pathname ? '/' : '') +
-							base.pathname.slice(0, base.pathname.lastIndexOf('/') + 1) + href.pathname) : base.pathname)
-						),
-						this.extension
-					)+
-					(href.protocol || href.authority || href.pathname ? href.search : (href.search || base.search)) +
-					href.hash;
-				}
-
-				return absoluteUrl;
-			}
-
-			return toAbsoluteURL;
-		})(),
 
 		getConfig: function(selector){
 			var configs = this.configs, i = 0, j = configs.length, config;
@@ -927,10 +861,10 @@ function forOf(iterable, fn, bind){
 		locate: function(module){
 			var meta = this.findMeta(module.name);
 			var path = meta.path;
-			var address = this.toAbsoluteURL(this.baseUrl, path);
+			var address = new URI(path, this.baseUrl);
 
 			Object.assign(module.meta, meta);
-			module.location = this.parseURI(address);
+			module.location = address;
 
 			var pathname = module.location.pathname;
 			var slashLastIndexOf = pathname.lastIndexOf('/');
@@ -954,9 +888,16 @@ function forOf(iterable, fn, bind){
 				extension = filename.slice(dotLastIndexOf);
 			}
 
+			if( extension != this.extension ){
+				extension = this.extension;
+				address.pathname+= this.extension;
+			}
+
 			module.dirname = dirname;
 			module.filename = filename;
 			module.extension = extension;
+
+			debug('localized', module.name, 'at', String(address));
 
 			return address;
 		},
@@ -970,10 +911,14 @@ function forOf(iterable, fn, bind){
 		fetch: function(module){
 			var location = module.location;
 			var protocol = location.protocol.slice(0, -1); // remove ':' from 'file:'
-			var href = location.href;
+			var href = String(location);
 
 			if( false === protocol in this.protocols ){
 				throw new Error('The protocol "' + protocol + '" is not supported');
+			}
+
+			if( typeof href != 'string' ){
+				throw new TypeError('module url must a a string ' + href);
 			}
 
 			return this.protocols[protocol].call(this, href).then(function(response){
@@ -1046,11 +991,61 @@ function forOf(iterable, fn, bind){
 			return window;
 		},
 
+		getSrc: function(){
+			return document.scripts[document.scripts.length - 1].src;
+		},
+
+		getAgent: function(){
+			var ua = navigator.userAgent.toLowerCase();
+			var regex = /(opera|ie|firefox|chrome|version)[\s\/:]([\w\d\.]+)?.*?(safari|version[\s\/:]([\w\d\.]+)|$)/;
+			var UA = ua.match(regex) || [null, 'unknown', 0];
+			var name = UA[1] == 'version' ? UA[3] : UA[1];
+			var version;
+
+			// version
+			if( UA[1] == 'ie' && document.documentMode ) version = true;
+			else if( UA[1] == 'opera' && UA[4] ) version = parseFloat(UA[4]);
+			else version = parseFloat(UA[2]);
+
+			return {
+				name: name,
+				version: version
+			};
+		},
+
+		getName: function(){
+			return this.getAgent().name;
+		},
+
+		getVersion: function(){
+			return this.getAgent().version;
+		},
+
+		getOs: function(){
+			return navigator.platform.toLowerCase();
+		},
+
 		getBaseUrl: function(){
 			var href = window.location.href.split('#')[0].split('?')[0];
 			var baseUrl = href.slice(0, href.lastIndexOf('/') + 1);
 
 			return baseUrl;
+		},
+
+		// browser must include script tag with the requirement
+		loadScript: function(url, done){
+			var script = document.createElement('script');
+
+			script.src = url;
+			script.type = 'text/javascript';
+			script.onload = function(){
+				done();
+			};
+			script.onerror = function(error){
+				done(error);
+			};
+
+			document.head.appendChild(script);
 		},
 
 		request: function(url, options){
@@ -1086,6 +1081,7 @@ function forOf(iterable, fn, bind){
 					}
 				}
 
+				xhr.onerror = reject;
 				xhr.onreadystatechange = function(){
 					if( xhr.readyState === 4 ){
 						resolve({
@@ -1094,8 +1090,13 @@ function forOf(iterable, fn, bind){
 							headers: parseHeaders(xhr.getAllResponseHeaders())
 						});
 					}
-				};			
+				};
+				try{
 				xhr.send(options.body || null);
+				}
+				catch(e){
+					reject(e);
+				}
 			});
 		},
 
@@ -1103,7 +1104,9 @@ function forOf(iterable, fn, bind){
 			var protocols = {};
 
 			protocols.file = function(url){
-				return protocols.http(url).then(function(response){
+				debug('xhr', url);
+
+				return this.protocols.http.call(this, url).then(function(response){
 					// fix for browsers returning status == 0 for local file request
 					if( response.status === 0 ){
 						response.status = response.body ? 200 : 404;
@@ -1113,22 +1116,6 @@ function forOf(iterable, fn, bind){
 			};
 
 			return protocols;
-		},
-
-		// browser must include script tag with the requirement
-		getRequirement: function(url, done){
-			var script = document.createElement('script');
-
-			script.src = url;
-			script.type = 'text/javascript';
-			script.onload = function(){
-				done();
-			};
-			script.onerror = function(error){
-				done(error);
-			};
-
-			document.head.appendChild(script);
 		},
 
 		setup: function(){
@@ -1149,8 +1136,8 @@ function forOf(iterable, fn, bind){
 			}
 
 			function completed(){
-				document.removeEventListener("DOMContentLoaded", completed);
-				window.removeEventListener("load", completed);
+				document.removeEventListener('DOMContentLoaded', completed);
+				window.removeEventListener('load', completed);
 				ready();
 			}
 
@@ -1164,9 +1151,33 @@ function forOf(iterable, fn, bind){
 		}
 	});
 
-	ENV.definePlatform('server', {
+	ENV.definePlatform('process', {
 		test: function(){
 			return typeof process !== 'undefined';
+		},
+
+		getSrc: function(){
+			var src = __filename;
+
+			if( process.platform.match(/^win/) ){
+				src = src.replace(/\\/g, '/');
+			}
+
+			return src;
+		},
+
+		getName: function(){
+			return 'node';
+		},
+
+		getVersion: function(){
+			return process.version;
+		},
+
+		getOs: function(){
+			// https://nodejs.org/api/process.html#process_process_platform
+			// 'darwin', 'freebsd', 'linux', 'sunos', 'win32'
+			return process.platform;
 		},
 
 		getGlobal: function(){
@@ -1183,21 +1194,35 @@ function forOf(iterable, fn, bind){
 			return baseUrl;
 		},
 
+		// in node env requires it
+		loadScript: function(url, done){
+			var error = null;
+
+			try{
+				require(url);
+			}
+			catch(e){
+				error = e;
+			}
+
+			done(error);
+		},
+
 		request: function(url, options){
 			var http = require('http');
 			var https = require('https');
 			var parse = require('url').parse;
-			
+
 			var parsed = parse(url), secure;
 
 			Object.assign(options, parsed);
 
 			secure = options.protocol === 'https:';
 
-			options.port = secure ? 443 : 80;		
+			options.port = secure ? 443 : 80;
 
 			return new Promise(function(resolve, reject){
-				var httpRequest = (secure ? https : http).request(options);	
+				var httpRequest = (secure ? https : http).request(options);
 
 				console.log(options.method, url);
 
@@ -1242,12 +1267,6 @@ function forOf(iterable, fn, bind){
 		getSupportedProtocols: function(){
 			var protocols = {};
 
-			protocols.http = protocols.https = function(url){
-				return this.request(url, {
-					method: 'GET'
-				});
-			};
-
 			var fs = require('fs');
 			function fetchFile(location){
 				location = location.slice('file://'.length);
@@ -1279,20 +1298,6 @@ function forOf(iterable, fn, bind){
 			};
 
 			return protocols;
-		},
-
-		// in node env requires it
-		getRequirement: function(url, done){
-			var error = null;
-
-			try{
-				require(__dirname + '/' + url);
-			}
-			catch(e){
-				error = e;
-			}
-
-			done(error);
 		},
 
 		setup: function(){

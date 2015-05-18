@@ -1,3 +1,3 @@
-var a = include('a');
+var a = include('./a');
 
 console.log('hello ' + a);
