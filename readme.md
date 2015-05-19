@@ -50,14 +50,14 @@ include('./foo');
 include('../../foo');
 include('file:///C:/modules/foo');
 include('http://my-domain.com/modules/foo');
-include('http://external-domain.com/modules/foo');
 include('https://external-domain.com/modules/foo');
+include('github://user@repo/foo');
 ```
 
 ## Installation
 
 - node : `npm install -g @dmail/env`<br />
-- browser : `<script src="env/index.js"></script>`
+- browser : `<script src="env.js"></script>`
 
 ## ENV
 
