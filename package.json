@@ -1,12 +1,13 @@
 {
-	"name": "@dmail/env",
+	"name": "@dmail/jsenv",
 	"version": "0.0.1",
-	"main": "env.js",
-	"bin": "index.js",
+	"main": "index.js",
+	"bin": "bin.js",
+	"preferGlobal": true,
 	"dependencies": {
 	},
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/dmail/env"
+		"url": "https://github.com/dmail/jsenv"
 	}
 }
