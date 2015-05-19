@@ -4,16 +4,21 @@ Load & execute JavaScript modules accross platforms
 
 ## Node example
 
-- `npm install -g @dmail/env`
-- `node env b`
+- `npm install -g jsenv`
+- `jsenv b`
 - hello world is logged in the terminal
 
 ## Browser example
 
-- open index.html in your browser
+- `mkdir test & cd test & jsenv init`
+- open test/index.html in your browser
 - hello world is logged in the console
 
-Warning if you use chrome : you have to [start chrome using the flag --allow-file-access-from-files](http://www.chrome-allow-file-access-from-file.com)
+<Note that when running locally, ensure you are running from a local server or a browser with local XHR requests enabled. <If not you will get an error message.
+
+<For Chrome you have to [start chrome using the flag --allow-file-access-from-files](http://www.chrome-allow-file-access-from-file.com)
+
+<In Firefox this requires navigating to about:config, entering security.fileuri.strict_origin_policy in the filter box and toggling the option to false.
 
 ## Module format
 
@@ -56,8 +61,8 @@ include('github://user@repo/foo');
 
 ## Installation
 
-- node : `npm install -g @dmail/env`<br />
-- browser : `<script src="env.js"></script>`
+- node : `npm install -g jsenv`<br />
+- browser : `<script src="modules/jsenv/index.js"></script>`
 
 ## ENV
 
