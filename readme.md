@@ -56,7 +56,7 @@ include('../../foo');
 include('file:///C:/modules/foo');
 include('http://my-domain.com/modules/foo');
 include('https://external-domain.com/modules/foo');
-include('github://user@repo/foo');
+include('github://user@repo/foo#master');
 ```
 
 ## Installation

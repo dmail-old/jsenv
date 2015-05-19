@@ -9,23 +9,6 @@ https://github.com/ModuleLoader/es6-module-loader/blob/master/src/loader.js#L885
 https://gist.github.com/dherman/7568080
 https://github.com/ModuleLoader/es6-module-loader/wiki/Extending-the-ES6-Loader
 
-let baseurl be document relative : https://github.com/systemjs/systemjs/blob/master/lib/extension-core.js
-
-on utiliseras ça surement, ça permet des choses comme
-ENV.paths['lodash'] = '/js/lodash.js';
-ENV.paths['lodash/*'] = '/js/lodash/*.js';
-ENV.locate('lodash'); /js/lodash.js
-ENV.locate('lodash/map'); /js/lodash/map.js
-
-Lorsque j'ouvre index.html je dois être capble de localiser env et polyfill
-On pourrait symlink env (mais pas obligé on peut aussi avori le dossier env direct)
-
-Du coup y'aurait deux manière de lancer env, depuis la console:
-env fichier
-ou
-env build fichier (crée le index.html + symlink env)
-
-
 */
 
 if( !Object.assign ){
@@ -77,7 +60,7 @@ function forOf(iterable, fn, bind){
 
 (function(){
 	function shortenPath(filepath){
-		return require('path').relative(ENV.baseURL, filepath);
+		return require('path').relative(ENV.baseURI, filepath);
 	}
 
 	function debug(){
@@ -630,14 +613,10 @@ function forOf(iterable, fn, bind){
 		},
 
 		setup: function(){
-			// on pourrait utiliser du JSON ptet
-			debug('loading env.global.js');
-
-			// global is required
-			this.include('env.global.js').then(function(){
+			this.include('./env.global.js').then(function(){
 				debug('loading env.local.js');
 
-				return this.include('env.local.js').catch(function(error){
+				return this.include('./env.local.js').catch(function(error){
 					if( error && error.code === 'MODULE_NOT_FOUND' ) return;
 					return Promise.reject(error);
 				});
@@ -667,18 +646,20 @@ function forOf(iterable, fn, bind){
 		*/
 		githubRequest: function(url){
 			var parsed = new URI(url);
-			var giturl = replace('https://api.github.com/repos/{user}/{repo}/contents{path}{search}', {
+			var version = parsed.hash ? parsed.hash.slice(1) : 'master';
+			if( version === 'latest' ) version = 'master';
+			var giturl = replace('https://api.github.com/repos/{user}/{repo}/contents/{path}?ref={version}', {
 				user: parsed.username,
 				repo: parsed.host,
-				path: parsed.pathname || '/index.js',
-				search: parsed.search
+				path: parsed.pathname ? parsed.pathname.slice(1) : 'index.js',
+				version: version
 			});
 
 			return this.platform.request(giturl, {
 				method: 'GET',
 				headers: {
 					'accept': 'application/vnd.github.v3.raw',
-					'User-Agent': 'env' // https://developer.github.com/changes/2013-04-24-user-agent-required/
+					'User-Agent': 'jsenv' // https://developer.github.com/changes/2013-04-24-user-agent-required/
 				}
 			});
 		},
@@ -715,29 +696,6 @@ function forOf(iterable, fn, bind){
 			this.baseURL = this.platform.baseURL; // allow baseurl to be relative to baseURI
 
 			this.polyfillRequirements();
-		},
-
-		// TODO : https://github.com/systemjs/systemjs/blob/master/lib/extension-map.js
-		normalize: function(name, contextName, contextAddress){
-			function getBaseUrl(baseURL, baseURI){
-				return new URL(baseURL + (baseURL[baseURL.length - 1] != '/' ? '/' : ''), baseURI);
-			}
-
-			var absURLRegEx = /^([^\/]+:\/\/|\/)/;
-			var baseURL = getBaseUrl(this.baseURL, this.baseURI);
-			var normalizedName;
-
-			if( name.match(absURLRegEx) || name[0] == '.' ){
-				normalizedName = new URI(name, contextAddress || baseURL);
-			}
-			else{
-				normalizedName = new URI(this.findMeta(name).path, baseURL);
-			}
-
-			normalizedName = String(normalizedName);
-			debug('normalizing', name, contextName, String(contextAddress), 'to', normalizedName);
-
-			return normalizedName;
 		},
 
 		getConfig: function(selector){
@@ -797,6 +755,7 @@ function forOf(iterable, fn, bind){
 				match = this.matchSelector(normalizedName, config.selector);
 				if( match ){
 					Object.assign(meta, config.properties);
+
 					if( typeof match === 'string' ){
 						for(var key in meta){
 							meta[key] = meta[key].replace('*', match);
@@ -805,13 +764,85 @@ function forOf(iterable, fn, bind){
 				}
 			}, this);
 
+			// for wildcard match, add main only if the normalizedName does not contains '/' after the match
+			if( meta.main && (!match || typeof match != 'string' || match.indexOf('/') === -1) ){
+				meta.path+= '/' + meta.main;
+			}
+
 			return meta;
 		},
 
+		// https://github.com/systemjs/systemjs/blob/5ed14adca58abd3cf6c29783abd53af00b0c5bff/lib/package.js#L80
+		// for package, we have to know the main entry
+		normalize: function(name, contextName, contextAddress){
+			var absURLRegEx = /^([^\/]+:\/\/|\/)/;
+			var normalizedName;
+
+			function resolve(name, parentName){
+				// skip leading ./
+ 				var parts = name.split('/');
+				var i = 0;
+				var dotdots = 0;
+				while( parts[i] == '.' ){
+					i++;
+					if( i == parts.length ){
+						throw new TypeError('Invalid module name');
+					}
+				}
+				// count dot dots
+				while( parts[i] == '..' ){
+					i++;
+					dotdots++;
+					if( i == parts.length ){
+					  throw new TypeError('Invalid module name');
+					}
+				}
+
+				var parentParts = parentName.split('/');
+
+				parts = parts.splice(i, parts.length - i);
+
+				// if backtracking below the parent name, just set to the base-level like URLs
+				// NB if parentAddress is supported in the spec, we can URL normalize against it here instead
+				if( dotdots > parentParts.length ){
+					throw new TypeError('Normalization of "' + name + '" to "' + parentName + '" back-tracks below the parent');
+				}
+				parts = parentParts.splice(0, parentParts.length - dotdots - 1).concat(parts);
+
+				return parts.join('/');
+			}
+
+			if( name === '.' && contextName ){
+				if( contextName.match(absURLRegEx) ){
+					normalizedName = new URI(name, contextName);
+				}
+				else{
+					normalizedName = resolve(name, contextName);
+				}
+			}
+			else if( name[0] === '.' || name[0] === '/' ){
+				normalizedName = new URI(name, this.baseURL);
+			}
+
+			normalizedName = String(normalizedName);
+			debug('normalizing', name, contextName, String(contextAddress), 'to', normalizedName);
+
+			return normalizedName;
+		},
+
+		// https://github.com/systemjs/systemjs/blob/0.17/lib/core.js
 		locate: function(module){
-			var meta = this.findMeta(module.name);
-			var path = meta.path;
-			var address = new URI(path, this.baseURL);
+			var absURLRegEx = /^([^\/]+:\/\/|\/)/;
+			var name = module.name;
+			var address;
+			var meta = this.findMeta(name);
+
+			if( name.match(absURLRegEx) ){
+				address = new URI(name);
+			}
+			else{
+				address = new URI(meta.path, this.baseURL);
+			}
 
 			Object.assign(module.meta, meta);
 			module.location = address;
@@ -1252,13 +1283,11 @@ function forOf(iterable, fn, bind){
 
 		setup: function(){
 			if( require.main === module && process.argv.length > 2 ){
-				/*
-				var name = String(process.argv[2]);
-				debug('runasmain', name);
-				this.include(name).catch(function(error){
-					console.error(error.stack);
-				});
-*/
+				//var name = String(process.argv[2]);
+				//debug('runasmain', name);
+				//this.include(name).catch(function(error){
+				//	console.error(error.stack);
+				//});
 			}
 		}
 	});
