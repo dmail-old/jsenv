@@ -77,7 +77,7 @@ function forOf(iterable, fn, bind){
 
 (function(){
 	function shortenPath(filepath){
-		return require('path').relative(ENV.baseUrl, filepath);
+		return require('path').relative(ENV.baseURL, filepath);
 	}
 
 	function debug(){
@@ -240,7 +240,7 @@ function forOf(iterable, fn, bind){
 		},
 
 		collectDependencies: function(){
-			var result = this.loader.collectDependencies(this);
+			var result = this.meta.dependencies || this.loader.collectDependencies(this);
 
 			if( result === undefined ){
 				throw new TypeError('native es6 modules instantiation not supported');
@@ -711,80 +711,30 @@ function forOf(iterable, fn, bind){
 			}
 
 			Object.assign(this.protocols, this.platform.protocols);
-			this.baseUrl = this.platform.baseURL;
+			this.baseURI = this.platform.baseURL;
+			this.baseURL = this.platform.baseURL; // allow baseurl to be relative to baseURI
 
 			this.polyfillRequirements();
 		},
 
 		// TODO : https://github.com/systemjs/systemjs/blob/master/lib/extension-map.js
 		normalize: function(name, contextName, contextAddress){
-			contextName = this.findMeta(contextName).path;
-
-			if( typeof name != 'string' ){
-				throw new TypeError('Module name must be a string');
+			function getBaseUrl(baseURL, baseURI){
+				return new URL(baseURL + (baseURL[baseURL.length - 1] != '/' ? '/' : ''), baseURI);
 			}
 
-			// normalize('./parse', 'dmail/argv', 'github://dmail@argv')
-			// devient -> github://parse au lieu de github://dmail@argv/parse.js
-
-			var segments = name.split('/');
-
-			if( segments.length === 0 ){
-				throw new TypeError('No module name provided');
-			}
-
-			// current segment
-			var i = 0;
-			// is the module name relative
-			var rel = false;
-			// number of backtracking segments
-			var dotdots = 0;
-
-			if( segments[0] == '.' ){
-				i++;
-				if( i == segments.length ){
-					throw new TypeError('Illegal module name "' + name + '"');
-				}
-				rel = true;
-			}
-			else{
-				while( segments[i] == '..' ){
-					i++;
-					if( i == segments.length ){
-						throw new TypeError('Illegal module name "' + name + '"');
-					}
-				}
-				if( i ){
-					rel = true;
-				}
-				dotdots = i;
-			}
-
-			var j = i, segment;
-			for(;j<segments.length;j++){
-				segment = segments[j];
-				if( segment === '' || segment == '.' || segment == '..' ){
-					throw new TypeError('Illegal module name "' + name + '"');
-				}
-			}
-
+			var absURLRegEx = /^([^\/]+:\/\/|\/)/;
+			var baseURL = getBaseUrl(this.baseURL, this.baseURI);
 			var normalizedName;
 
-			if( rel ){
-				// build the full module name
-				var normalizedParts = [];
-				var parentParts = (/*contextAddress ||*/contextName || '').split('/');
-				var normalizedLen = parentParts.length - 1 - dotdots;
-
-				normalizedParts = normalizedParts.concat(parentParts.splice(0, parentParts.length - 1 - dotdots));
-				normalizedParts = normalizedParts.concat(segments.splice(i, segments.length - i));
-
-				normalizedName = normalizedParts.join('/');
+			if( name.match(absURLRegEx) || name[0] == '.' ){
+				normalizedName = new URI(name, contextAddress || baseURL);
 			}
 			else{
-				normalizedName = name;
+				normalizedName = new URI(this.findMeta(name).path, baseURL);
 			}
 
+			normalizedName = String(normalizedName);
 			debug('normalizing', name, contextName, String(contextAddress), 'to', normalizedName);
 
 			return normalizedName;
@@ -861,7 +811,7 @@ function forOf(iterable, fn, bind){
 		locate: function(module){
 			var meta = this.findMeta(module.name);
 			var path = meta.path;
-			var address = new URI(path, this.baseUrl);
+			var address = new URI(path, this.baseURL);
 
 			Object.assign(module.meta, meta);
 			module.location = address;
@@ -1302,11 +1252,13 @@ function forOf(iterable, fn, bind){
 
 		setup: function(){
 			if( require.main === module && process.argv.length > 2 ){
+				/*
 				var name = String(process.argv[2]);
 				debug('runasmain', name);
 				this.include(name).catch(function(error){
 					console.error(error.stack);
 				});
+*/
 			}
 		}
 	});
