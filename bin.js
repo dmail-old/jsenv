@@ -27,4 +27,12 @@ var cmd = process.argv[2] || 'start';
 
 console.log('requiring the command', cmd);
 
-require('./commands/' + cmd);
+try{
+	require('./commands/' + cmd);
+}
+catch(e){
+	if( e.code === 'MODULE_NOT_FOUND' ){
+		throw new Error('The command ' + cmd + ' does not exists');
+	}
+	throw e;
+}

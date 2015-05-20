@@ -8,5 +8,6 @@ symlink(envSource, envDestination).catch(function(error){
 	console.log(error.stack);
 });
 
-// si aucun fichier env.global.js n'existe, le créer?
+// si aucun fichier project.env.js existe, le créer?
 // si un .gitignore, ajouter modules/ ?
+// créer un fichier index.html?

@@ -543,6 +543,7 @@ function forOf(iterable, fn, bind){
 			'/global.env.js', // / means relative to the jsenv dirname here, not the env root
 			'./project.env.js'
 		],
+		mainModule: 'index',
 
 		createPlatform: function(type, options){
 			return new Platform(type, options);
@@ -625,6 +626,7 @@ function forOf(iterable, fn, bind){
 				if( path[0] === '/' ) path = self.platform.dirname + path;
 
 				return self.include(path).catch(function(error){
+					debug('optional module not found at', path);
 					if( error && error.code === 'MODULE_NOT_FOUND' ) return;
 					return Promise.reject(error);
 				});
@@ -633,13 +635,17 @@ function forOf(iterable, fn, bind){
 			// we do this in case an included file contains ENV.files.push()
 			function nextFile(){
 				if( i >= files.length ){
-					console.log('setup platform', this.platform.name);
-					this.platform.setup.call(this);
+					console.log('setup platform', self.platform.name);
+					self.platform.setup.call(self);
 				}
 				else{
 					file = files[i];
 					i++;
-					safeInclude(file).then(nextFile);
+					safeInclude(file).then(nextFile).catch(function(error){
+						setImmediate(function(){
+							throw error;
+						});
+					});
 				}
 			}
 
@@ -969,7 +975,7 @@ function forOf(iterable, fn, bind){
 		},
 
 		getSrc: function(){
-			var src = __filename;
+			var src = 'file://' + __filename;
 
 			if( process.platform.match(/^win/) ){
 				src = src.replace(/\\/g, '/');
@@ -1009,6 +1015,8 @@ function forOf(iterable, fn, bind){
 		// in node env requires it
 		loadScript: function(url, done){
 			var error = null;
+
+			url = url.slice('file://'.length);
 
 			try{
 				require(url);
@@ -1113,12 +1121,12 @@ function forOf(iterable, fn, bind){
 		},
 
 		setup: function(){
-			if( require.main === module && process.argv.length > 2 ){
-				//var name = String(process.argv[2]);
-				//debug('runasmain', name);
-				//this.include(name).catch(function(error){
-				//	console.error(error.stack);
-				//});
+			if( ENV.mainModule ){
+				ENV.include(ENV.mainModule).catch(function(error){
+					setImmediate(function(){
+						throw error;
+					});
+				});
 			}
 		}
 	});

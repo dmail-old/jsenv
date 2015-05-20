@@ -1,5 +1,3 @@
-var name = String(process.argv[2]);
-debug('runasmain', name);
-this.include(name).catch(function(error){
-	console.error(error.stack);
-});
+//if( process.argv.length > 2 ) ENV.mainModule = process.argv[3];
+
+require(process.env.ENV_GLOBAL_PATH);
