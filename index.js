@@ -4,10 +4,12 @@ inspiration:
 
 https://github.com/kriszyp/nodules
 https://github.com/ModuleLoader/es6-module-loader/blob/master/src/system.js
-
 https://github.com/ModuleLoader/es6-module-loader/blob/master/src/loader.js#L885
 https://gist.github.com/dherman/7568080
 https://github.com/ModuleLoader/es6-module-loader/wiki/Extending-the-ES6-Loader
+
+
+http://medialize.github.io/URI.js/uri-template.html
 
 */
 
@@ -520,7 +522,7 @@ function forOf(iterable, fn, bind){
 		}
 	});
 
-	var ENV = new ES6Loader({
+	var ENV = {
 		platforms: [],
 		platform: null,
 
@@ -536,6 +538,10 @@ function forOf(iterable, fn, bind){
 			'Symbol', // because required by iterator
 			'Iterator', // because required by promise.all
 			'Promise' // because it's amazing
+		],
+		files: [
+			'/global.env.js', // / means relative to the jsenv dirname here, not the env root
+			'./project.env.js'
 		],
 
 		createPlatform: function(type, options){
@@ -613,17 +619,31 @@ function forOf(iterable, fn, bind){
 		},
 
 		setup: function(){
-			this.include('./env.global.js').then(function(){
-				debug('loading env.local.js');
+			var self = this, files = this.files, i = 0, file;
 
-				return this.include('./env.local.js').catch(function(error){
+			function safeInclude(path){
+				if( path[0] === '/' ) path = self.platform.dirname + path;
+
+				return self.include(path).catch(function(error){
 					if( error && error.code === 'MODULE_NOT_FOUND' ) return;
 					return Promise.reject(error);
 				});
-			}.bind(this)).then(function(){
-				console.log('setup platform', this.platform.name);
-				this.platform.setup.call(this);
-			}.bind(this));
+			}
+
+			// we do this in case an included file contains ENV.files.push()
+			function nextFile(){
+				if( i >= files.length ){
+					console.log('setup platform', this.platform.name);
+					this.platform.setup.call(this);
+				}
+				else{
+					file = files[i];
+					i++;
+					safeInclude(file).then(nextFile);
+				}
+			}
+
+			nextFile();
 		},
 
 		httpRequest: function(url){
@@ -772,196 +792,12 @@ function forOf(iterable, fn, bind){
 			return meta;
 		},
 
-		// https://github.com/systemjs/systemjs/blob/5ed14adca58abd3cf6c29783abd53af00b0c5bff/lib/package.js#L80
-		// for package, we have to know the main entry
-		normalize: function(name, contextName, contextAddress){
-			var absURLRegEx = /^([^\/]+:\/\/|\/)/;
-			var normalizedName;
-
-			function resolve(name, parentName){
-				// skip leading ./
- 				var parts = name.split('/');
-				var i = 0;
-				var dotdots = 0;
-				while( parts[i] == '.' ){
-					i++;
-					if( i == parts.length ){
-						throw new TypeError('Invalid module name');
-					}
-				}
-				// count dot dots
-				while( parts[i] == '..' ){
-					i++;
-					dotdots++;
-					if( i == parts.length ){
-					  throw new TypeError('Invalid module name');
-					}
-				}
-
-				var parentParts = parentName.split('/');
-
-				parts = parts.splice(i, parts.length - i);
-
-				// if backtracking below the parent name, just set to the base-level like URLs
-				// NB if parentAddress is supported in the spec, we can URL normalize against it here instead
-				if( dotdots > parentParts.length ){
-					throw new TypeError('Normalization of "' + name + '" to "' + parentName + '" back-tracks below the parent');
-				}
-				parts = parentParts.splice(0, parentParts.length - dotdots - 1).concat(parts);
-
-				return parts.join('/');
-			}
-
-			if( name === '.' && contextName ){
-				if( contextName.match(absURLRegEx) ){
-					normalizedName = new URI(name, contextName);
-				}
-				else{
-					normalizedName = resolve(name, contextName);
-				}
-			}
-			else if( name[0] === '.' || name[0] === '/' ){
-				normalizedName = new URI(name, this.baseURL);
-			}
-
-			normalizedName = String(normalizedName);
-			debug('normalizing', name, contextName, String(contextAddress), 'to', normalizedName);
-
-			return normalizedName;
-		},
-
-		// https://github.com/systemjs/systemjs/blob/0.17/lib/core.js
-		locate: function(module){
-			var absURLRegEx = /^([^\/]+:\/\/|\/)/;
-			var name = module.name;
-			var address;
-			var meta = this.findMeta(name);
-
-			if( name.match(absURLRegEx) ){
-				address = new URI(name);
-			}
-			else{
-				address = new URI(meta.path, this.baseURL);
-			}
-
-			Object.assign(module.meta, meta);
-			module.location = address;
-
-			var pathname = module.location.pathname;
-			var slashLastIndexOf = pathname.lastIndexOf('/');
-			var dirname, filename, extension;
-
-			if( slashLastIndexOf === -1 ){
-				dirname = '.';
-				filename = pathname;
-			}
-			else{
-				dirname = pathname.slice(0, slashLastIndexOf);
-				filename = pathname.slice(slashLastIndexOf + 1);
-			}
-
-			var dotLastIndexOf = filename.lastIndexOf('.');
-
-			if( dotLastIndexOf === -1 ){
-				extension = '';
-			}
-			else{
-				extension = filename.slice(dotLastIndexOf);
-			}
-
-			if( extension != this.extension ){
-				extension = this.extension;
-				address.pathname+= this.extension;
-			}
-
-			module.dirname = dirname;
-			module.filename = filename;
-			module.extension = extension;
-
-			debug('localized', module.name, 'at', String(address));
-
-			return address;
-		},
-
 		createModuleNotFoundError: function(location){
 			var error = new Error('module not found ' + location);
 			error.code = 'MODULE_NOT_FOUND';
 			return error;
-		},
-
-		fetch: function(module){
-			var location = module.location;
-			var protocol = location.protocol.slice(0, -1); // remove ':' from 'file:'
-			var href = String(location);
-
-			if( false === protocol in this.protocols ){
-				throw new Error('The protocol "' + protocol + '" is not supported');
-			}
-
-			if( typeof href != 'string' ){
-				throw new TypeError('module url must a a string ' + href);
-			}
-
-			return this.protocols[protocol].call(this, href).then(function(response){
-				if( response.status === 404 ){
-					throw this.createModuleNotFoundError(module.location);
-				}
-				else if( response.status != 200 ){
-					throw new Error('fetch failed with response status: ' + response.status);
-				}
-
-				return response.body;
-			}.bind(this));
-		},
-
-		collectDependencies: (function(){
-			// https://github.com/jonschlinkert/strip-comments/blob/master/index.js
-			var reLine = /(^|[^\S\n])(?:\/\/)([\s\S]+?)$/gm;
-			var reLineIgnore = /(^|[^\S\n])(?:\/\/[^!])([\s\S]+?)$/gm;
-			function stripLineComment(str, safe){
-				return String(str).replace(safe ? reLineIgnore : reLine, '');
-			}
-
-			var reBlock = /\/\*(?!\/)(.|[\r\n]|\n)+?\*\/\n?\n?/gm;
-			var reBlockIgnore = /\/\*(?!(\*?\/|\*?\!))(.|[\r\n]|\n)+?\*\/\n?\n?/gm;
-			function stripBlockComment(str, safe){
-				return String(str).replace(safe ? reBlockIgnore : reBlock, '');
-			}
-
-			var reDependency = /(?:^|;|\s+|ENV\.)include\(['"]([^'"]+)['"]\)/gm;
-			// for the moment remove regex for static ENV.include(), it's just an improvment but
-			// not required at all + it's strange for a dynamic ENV.include to be preloaded
-			reDependency = /(?:^|;|\s+)include\(['"]([^'"]+)['"]\)/gm;
-			function collectIncludeCalls(str){
-				str = stripLineComment(stripBlockComment(str));
-
-				var calls = [], match;
-				while(match = reDependency.exec(str) ){
-					calls.push(match[1]);
-				}
-				reDependency.lastIndex = 0;
-
-				return calls;
-			}
-
-			return function collectDependencies(module){
-				return collectIncludeCalls(module.source);
-			};
-		})(),
-
-		eval: function(code, url){
-			if( url ) code+= '\n//# sourceURL=' + url;
-			return eval(code);
-		},
-
-		parse: function(module){
-			return this.eval('(function(module, include){\n\n' + module.source + '\n\n})', module.address);
-		},
-
-		execute: function(module){
-			return module.parsed.call(this.global, module, module.include.bind(module));
 		}
-	});
+	};
 
 	ENV.definePlatform('browser', {
 		test: function(){
@@ -984,7 +820,7 @@ function forOf(iterable, fn, bind){
 			var version;
 
 			// version
-			if( UA[1] == 'ie' && document.documentMode ) version = true;
+			if( UA[1] == 'ie' && document.documentMode ) version = document.documentMode;
 			else if( UA[1] == 'opera' && UA[4] ) version = parseFloat(UA[4]);
 			else version = parseFloat(UA[2]);
 
@@ -1072,12 +908,7 @@ function forOf(iterable, fn, bind){
 						});
 					}
 				};
-				try{
 				xhr.send(options.body || null);
-				}
-				catch(e){
-					reject(e);
-				}
 			});
 		},
 
@@ -1106,7 +937,7 @@ function forOf(iterable, fn, bind){
 					script = scripts[i];
 					if( script.type === 'module' ){
 						ENV.module(script.innerHTML.slice(1)).catch(function(error){
-							setTimeout(function(){ throw error; });
+							setImmediate(function(){ throw error; });
 						});
 					}
 				}
@@ -1292,6 +1123,191 @@ function forOf(iterable, fn, bind){
 		}
 	});
 
-	ENV.init();
+	Object.assign(ENV, {
+		// https://github.com/systemjs/systemjs/blob/5ed14adca58abd3cf6c29783abd53af00b0c5bff/lib/package.js#L80
+		// for package, we have to know the main entry
+		normalize: function(name, contextName, contextAddress){
+			var absURLRegEx = /^([^\/]+:\/\/|\/)/;
+			var normalizedName;
 
+			function resolve(name, parentName){
+				// skip leading ./
+ 				var parts = name.split('/');
+				var i = 0;
+				var dotdots = 0;
+				while( parts[i] == '.' ){
+					i++;
+					if( i == parts.length ){
+						throw new TypeError('Invalid module name');
+					}
+				}
+				// count dot dots
+				while( parts[i] == '..' ){
+					i++;
+					dotdots++;
+					if( i == parts.length ){
+					  throw new TypeError('Invalid module name');
+					}
+				}
+
+				var parentParts = parentName.split('/');
+
+				parts = parts.splice(i, parts.length - i);
+
+				// if backtracking below the parent name, just set to the base-level like URLs
+				// NB if parentAddress is supported in the spec, we can URL normalize against it here instead
+				if( dotdots > parentParts.length ){
+					throw new TypeError('Normalization of "' + name + '" to "' + parentName + '" back-tracks below the parent');
+				}
+				parts = parentParts.splice(0, parentParts.length - dotdots - 1).concat(parts);
+
+				return parts.join('/');
+			}
+
+			if( name === '.' && contextName ){
+				if( contextName.match(absURLRegEx) ){
+					normalizedName = new URI(name, contextName);
+				}
+				else{
+					normalizedName = resolve(name, contextName);
+				}
+			}
+			else if( name[0] === '.' || name[0] === '/' ){
+				normalizedName = new URI(name, this.baseURL);
+			}
+
+			normalizedName = String(normalizedName);
+			debug('normalizing', name, contextName, String(contextAddress), 'to', normalizedName);
+
+			return normalizedName;
+		},
+
+		// https://github.com/systemjs/systemjs/blob/0.17/lib/core.js
+		locate: function(module){
+			var absURLRegEx = /^([^\/]+:\/\/|\/)/;
+			var name = module.name;
+			var address;
+			var meta = this.findMeta(name);
+
+			if( name.match(absURLRegEx) ){
+				address = new URI(name);
+			}
+			else{
+				address = new URI(meta.path, this.baseURL);
+			}
+
+			Object.assign(module.meta, meta);
+
+			var pathname = address.pathname;
+			var slashLastIndexOf = pathname.lastIndexOf('/');
+			var dirname, basename, extension;
+			var dotLastIndexOf;
+
+			if( slashLastIndexOf === -1 ){
+				dirname = '.';
+				basename = pathname;
+			}
+			else{
+				dirname = pathname.slice(0, slashLastIndexOf);
+				basename = pathname.slice(slashLastIndexOf + 1);
+			}
+
+			dotLastIndexOf = basename.lastIndexOf('.');
+			if( dotLastIndexOf === -1 ){
+				extension = '';
+			}
+			else{
+				extension = basename.slice(dotLastIndexOf);
+			}
+
+			if( extension != this.extension ){
+				extension = this.extension;
+				address.pathname+= this.extension;
+			}
+
+			module.dirname = dirname;
+			module.basename = basename;
+			module.extension = extension;
+
+			debug('localized', module.name, 'at', String(address));
+
+			return address;
+		},
+
+		fetch: function(module){
+			var location = module.address;
+			var protocol = location.protocol.slice(0, -1); // remove ':' from 'file:'
+			var href = String(location);
+
+			if( false === protocol in this.protocols ){
+				throw new Error('The protocol "' + protocol + '" is not supported');
+			}
+
+			if( typeof href != 'string' ){
+				throw new TypeError('module url must a a string ' + href);
+			}
+
+			return this.protocols[protocol].call(this, href).then(function(response){
+				if( response.status === 404 ){
+					throw this.createModuleNotFoundError(location);
+				}
+				else if( response.status != 200 ){
+					throw new Error('fetch failed with response status: ' + response.status);
+				}
+
+				return response.body;
+			}.bind(this));
+		},
+
+		collectDependencies: (function(){
+			// https://github.com/jonschlinkert/strip-comments/blob/master/index.js
+			var reLine = /(^|[^\S\n])(?:\/\/)([\s\S]+?)$/gm;
+			var reLineIgnore = /(^|[^\S\n])(?:\/\/[^!])([\s\S]+?)$/gm;
+			function stripLineComment(str, safe){
+				return String(str).replace(safe ? reLineIgnore : reLine, '');
+			}
+
+			var reBlock = /\/\*(?!\/)(.|[\r\n]|\n)+?\*\/\n?\n?/gm;
+			var reBlockIgnore = /\/\*(?!(\*?\/|\*?\!))(.|[\r\n]|\n)+?\*\/\n?\n?/gm;
+			function stripBlockComment(str, safe){
+				return String(str).replace(safe ? reBlockIgnore : reBlock, '');
+			}
+
+			var reDependency = /(?:^|;|\s+|ENV\.)include\(['"]([^'"]+)['"]\)/gm;
+			// for the moment remove regex for static ENV.include(), it's just an improvment but
+			// not required at all + it's strange for a dynamic ENV.include to be preloaded
+			reDependency = /(?:^|;|\s+)include\(['"]([^'"]+)['"]\)/gm;
+			function collectIncludeCalls(str){
+				str = stripLineComment(stripBlockComment(str));
+
+				var calls = [], match;
+				while(match = reDependency.exec(str) ){
+					calls.push(match[1]);
+				}
+				reDependency.lastIndex = 0;
+
+				return calls;
+			}
+
+			return function collectDependencies(module){
+				return collectIncludeCalls(module.source);
+			};
+		})(),
+
+		eval: function(code, url){
+			if( url ) code+= '\n//# sourceURL=' + url;
+			return eval(code);
+		},
+
+		parse: function(module){
+			return this.eval('(function(module, include){\n\n' + module.source + '\n\n})', module.address);
+		},
+
+		execute: function(module){
+			return module.parsed.call(this.global, module, module.include.bind(module));
+		}
+	});
+
+	ENV = new ES6Loader(ENV);
+	ENV.init();
 })();
