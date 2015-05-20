@@ -20,12 +20,10 @@ var relative = path.relative(__dirname, envLocation);
 var to = process.cwd() + '/modules/' + envName; // ce /modules/ devrait être configurable non?
 var resolved = path.resolve(to, relative);
 
-process.env.ENV_GLOBAL_PATH = envLocation;
-process.env.ENV_LOCAL_PATH = resolved;
+process.env.JSENV_GLOBAL_PATH = envLocation;
+process.env.JSENV_PROJECT_PATH = resolved;
 
 var cmd = process.argv[2] || 'start';
-
-console.log('requiring the command', cmd);
 
 try{
 	require('./commands/' + cmd);

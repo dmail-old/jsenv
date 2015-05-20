@@ -447,9 +447,7 @@ function forOf(iterable, fn, bind){
 				module.address = options.address;
 			}
 
-			return module.locate().then(function(){
-				return module.fetch();
-			});
+			return Promise.resolve(module);
 		},
 
 		// execute a top level anonymous module, not registering it
@@ -493,6 +491,9 @@ function forOf(iterable, fn, bind){
 		}
 	});
 
+	var ENV = {};
+
+	// platforms
 	var Platform = create({
 		constructor: function(type, options){
 			this.type = String(type);
@@ -518,20 +519,17 @@ function forOf(iterable, fn, bind){
 		},
 
 		setup: function(){
-			// noop
+			ENV.onload();
 		}
 	});
 
-	var ENV = {
+	Object.assign(ENV, {
 		platforms: [],
 		platform: null,
-
 		globalName: 'ENV',
 		global: null,
 		protocols: {},
 		baseUrl: null,
-		extension: '.js',
-		configs: [],
 		requirements: [
 			'URI',
 			'setImmediate', // because required by promise
@@ -543,16 +541,9 @@ function forOf(iterable, fn, bind){
 			'/global.env.js', // / means relative to the jsenv dirname here, not the env root
 			'./project.env.js'
 		],
-		mainModule: 'index',
 
 		createPlatform: function(type, options){
 			return new Platform(type, options);
-		},
-
-		definePlatform: function(type, options){
-			var platform = this.createPlatform(type, options);
-			this.platforms.push(platform);
-			return platform;
 		},
 
 		findPlatform: function(){
@@ -652,10 +643,9 @@ function forOf(iterable, fn, bind){
 			nextFile();
 		},
 
-		httpRequest: function(url){
-			return this.platform.request(url, {
-				method: 'GET'
-			});
+		httpRequest: function(url, options){
+			options.method = 'GET';
+			return this.platform.request(url, options);
 		},
 
 		/*
@@ -670,7 +660,7 @@ function forOf(iterable, fn, bind){
 		xhr.setRequestHeader('if-modified-since', date.toUTCString());
 		xhr.send(null);
 		*/
-		githubRequest: function(url){
+		githubRequest: function(url, options){
 			var parsed = new URI(url);
 			var version = parsed.hash ? parsed.hash.slice(1) : 'master';
 			if( version === 'latest' ) version = 'master';
@@ -681,13 +671,14 @@ function forOf(iterable, fn, bind){
 				version: version
 			});
 
-			return this.platform.request(giturl, {
-				method: 'GET',
-				headers: {
-					'accept': 'application/vnd.github.v3.raw',
-					'User-Agent': 'jsenv' // https://developer.github.com/changes/2013-04-24-user-agent-required/
-				}
+			options.method = 'GET';
+			options.headers = options.headers || {};
+			Object.assign(options.headers, {
+				'accept': 'application/vnd.github.v3.raw',
+				'User-Agent': 'jsenv' // https://developer.github.com/changes/2013-04-24-user-agent-required/
 			});
+
+			return this.platform.request(giturl, options);
 		},
 
 		init: function(){
@@ -723,89 +714,9 @@ function forOf(iterable, fn, bind){
 
 			this.polyfillRequirements();
 		},
+	});
 
-		getConfig: function(selector){
-			var configs = this.configs, i = 0, j = configs.length, config;
-
-			for(;i<j;i++){
-				config = configs[i];
-				if( config.selector === selector ) break;
-				else config = null;
-			}
-
-			return config;
-		},
-
-		config: function(selector, properties){
-			var config = this.getConfig(selector);
-
-			if( config ){
-				Object.assign(config.properties, properties);
-			}
-			else{
-				this.configs.push({
-					selector: selector,
-					properties: properties
-				});
-				// keep config sorted (the most specific config is the last applied)
-				this.configs = this.configs.sort(function(a, b){
-					return (a.path ? a.path.length : 0) - (b.path ? b.path.length : 0);
-				});
-			}
-		},
-
-		matchSelector: function(name, selector){
-			var starIndex = selector.indexOf('*'), match = false;
-
-			if( starIndex === -1 ){
-				if( name === selector ){
-					match =  true;
-				}
-			}
-			else{
-				var left = selector.slice(0, starIndex), right = selector.slice(starIndex + 1);
-				var nameLeft = name.slice(0, left.length), nameRight = name.slice(name.length - right.length);
-
-				if( left == nameLeft && right == nameRight ){
-					match = name.slice(left.length, name.length - right.length);
-				}
-			}
-
-			return match;
-		},
-
-		findMeta: function(normalizedName){
-			var meta = {path: normalizedName}, match;
-
-			this.configs.forEach(function(config){
-				match = this.matchSelector(normalizedName, config.selector);
-				if( match ){
-					Object.assign(meta, config.properties);
-
-					if( typeof match === 'string' ){
-						for(var key in meta){
-							meta[key] = meta[key].replace('*', match);
-						}
-					}
-				}
-			}, this);
-
-			// for wildcard match, add main only if the normalizedName does not contains '/' after the match
-			if( meta.main && (!match || typeof match != 'string' || match.indexOf('/') === -1) ){
-				meta.path+= '/' + meta.main;
-			}
-
-			return meta;
-		},
-
-		createModuleNotFoundError: function(location){
-			var error = new Error('module not found ' + location);
-			error.code = 'MODULE_NOT_FOUND';
-			return error;
-		}
-	};
-
-	ENV.definePlatform('browser', {
+	var browserPlatform = ENV.createPlatform('browser', {
 		test: function(){
 			return typeof window !== 'undefined';
 		},
@@ -921,10 +832,10 @@ function forOf(iterable, fn, bind){
 		getSupportedProtocols: function(){
 			var protocols = {};
 
-			protocols.file = function(url){
+			protocols.file = function(url, options){
 				debug('xhr', url);
 
-				return this.protocols.http.call(this, url).then(function(response){
+				return this.protocols.http.call(this, url, options).then(function(response){
 					// fix for browsers returning status == 0 for local file request
 					if( response.status === 0 ){
 						response.status = response.body ? 200 : 404;
@@ -948,9 +859,7 @@ function forOf(iterable, fn, bind){
 					}
 				}
 
-				if( ENV.mainModule ){
-					ENV.include(ENV.mainModule).catch(console.error);
-				}
+				ENV.onload();
 			}
 
 			function completed(){
@@ -969,7 +878,7 @@ function forOf(iterable, fn, bind){
 		}
 	});
 
-	ENV.definePlatform('process', {
+	var processPlatform = ENV.createPlatform('process', {
 		test: function(){
 			return typeof process !== 'undefined';
 		},
@@ -1088,7 +997,7 @@ function forOf(iterable, fn, bind){
 			var protocols = {};
 
 			var fs = require('fs');
-			function fetchFile(location){
+			function fetchFile(location, options){
 				location = location.slice('file://'.length);
 
 				return new Promise(function(resolve, reject){
@@ -1104,25 +1013,125 @@ function forOf(iterable, fn, bind){
 							}
 						}
 						else{
-							resolve({
-								status: 200,
-								body: source
+							fs.stat(location, function(error, stat){
+								if( error ){
+									reject(error);
+								}
+								else{
+									resolve({
+										status: 200,
+										body: source,
+										headers: {
+											'last-modified': stat.mtime
+										}
+									});
+								}
 							});
 						}
 					});
 				});
 			}
 
-			protocols.file = function(location, module){
-				return fetchFile(location, module);
+			protocols.file = function(location, options){
+				return fetchFile(location, options);
 			};
 
 			return protocols;
+		}
+	});
+
+	ENV.platforms.push(browserPlatform);
+	ENV.platforms.push(processPlatform);
+
+	// configs
+	Object.assign(ENV, {
+		extension: '.js',
+		configs: [],
+		mainModule: 'index',
+
+		getConfig: function(selector){
+			var configs = this.configs, i = 0, j = configs.length, config;
+
+			for(;i<j;i++){
+				config = configs[i];
+				if( config.selector === selector ) break;
+				else config = null;
+			}
+
+			return config;
 		},
 
-		setup: function(){
-			if( ENV.mainModule ){
-				ENV.include(ENV.mainModule).catch(function(error){
+		config: function(selector, properties){
+			var config = this.getConfig(selector);
+
+			if( config ){
+				Object.assign(config.properties, properties);
+			}
+			else{
+				this.configs.push({
+					selector: selector,
+					properties: properties
+				});
+				// keep config sorted (the most specific config is the last applied)
+				this.configs = this.configs.sort(function(a, b){
+					return (a.path ? a.path.length : 0) - (b.path ? b.path.length : 0);
+				});
+			}
+		},
+
+		matchSelector: function(name, selector){
+			var starIndex = selector.indexOf('*'), match = false;
+
+			if( starIndex === -1 ){
+				if( name === selector ){
+					match =  true;
+				}
+			}
+			else{
+				var left = selector.slice(0, starIndex), right = selector.slice(starIndex + 1);
+				var nameLeft = name.slice(0, left.length), nameRight = name.slice(name.length - right.length);
+
+				if( left == nameLeft && right == nameRight ){
+					match = name.slice(left.length, name.length - right.length);
+				}
+			}
+
+			return match;
+		},
+
+		findMeta: function(normalizedName){
+			var meta = {path: normalizedName}, match;
+
+			this.configs.forEach(function(config){
+				match = this.matchSelector(normalizedName, config.selector);
+				if( match ){
+					Object.assign(meta, config.properties);
+
+					if( typeof match === 'string' ){
+						for(var key in meta){
+							meta[key] = meta[key].replace('*', match);
+						}
+					}
+				}
+			}, this);
+
+			// for wildcard match, add main only if the normalizedName does not contains '/' after the match
+			if( meta.main && (!match || typeof match != 'string' || match.indexOf('/') === -1) ){
+				meta.path+= '/' + meta.main;
+			}
+
+			return meta;
+		},
+
+		createModuleNotFoundError: function(location){
+			var error = new Error('module not found ' + location);
+			error.code = 'MODULE_NOT_FOUND';
+			return error;
+		},
+
+		onload: function(){
+			if( this.mainModule ){
+				this.include(this.mainModule).catch(function(error){
 					setImmediate(function(){
 						throw error;
 					});
@@ -1131,6 +1140,7 @@ function forOf(iterable, fn, bind){
 		}
 	});
 
+	// overrides
 	Object.assign(ENV, {
 		// https://github.com/systemjs/systemjs/blob/5ed14adca58abd3cf6c29783abd53af00b0c5bff/lib/package.js#L80
 		// for package, we have to know the main entry
@@ -1182,6 +1192,9 @@ function forOf(iterable, fn, bind){
 			}
 			else if( name[0] === '.' || name[0] === '/' ){
 				normalizedName = new URI(name, this.baseURL);
+			}
+			else{
+				normalizedName = name;
 			}
 
 			normalizedName = String(normalizedName);
@@ -1246,6 +1259,7 @@ function forOf(iterable, fn, bind){
 			var location = module.address;
 			var protocol = location.protocol.slice(0, -1); // remove ':' from 'file:'
 			var href = String(location);
+			var options = {};
 
 			if( false === protocol in this.protocols ){
 				throw new Error('The protocol "' + protocol + '" is not supported');
@@ -1255,12 +1269,23 @@ function forOf(iterable, fn, bind){
 				throw new TypeError('module url must a a string ' + href);
 			}
 
-			return this.protocols[protocol].call(this, href).then(function(response){
+			if( module.meta.mtime ){
+				options.headers = {
+					'if-modified-since' : module.meta.mtime
+				};
+			}
+
+			return this.protocols[protocol].call(this, href, options).then(function(response){
 				if( response.status === 404 ){
 					throw this.createModuleNotFoundError(location);
 				}
 				else if( response.status != 200 ){
 					throw new Error('fetch failed with response status: ' + response.status);
+				}
+
+				module.meta.fetchHeaders = response.headers;
+				if( response.headers && 'last-modified' in response.headers ){
+					module.meta.mtime = response.headers['last-modified'];
 				}
 
 				return response.body;
@@ -1284,7 +1309,7 @@ function forOf(iterable, fn, bind){
 			var reDependency = /(?:^|;|\s+|ENV\.)include\(['"]([^'"]+)['"]\)/gm;
 			// for the moment remove regex for static ENV.include(), it's just an improvment but
 			// not required at all + it's strange for a dynamic ENV.include to be preloaded
-			reDependency = /(?:^|;|\s+)include\(['"]([^'"]+)['"]\)/gm;
+			//reDependency = /(?:^|;|\s+)include\(['"]([^'"]+)['"]\)/gm;
 			function collectIncludeCalls(str){
 				str = stripLineComment(stripBlockComment(str));
 
@@ -1315,7 +1340,7 @@ function forOf(iterable, fn, bind){
 			return module.parsed.call(this.global, module, module.include.bind(module));
 		}
 	});
-
 	ENV = new ES6Loader(ENV);
+
 	ENV.init();
 })();

@@ -17,8 +17,10 @@ function symlink(source, destination){
 		// check the existing symbolic link
 		if( stat.isSymbolicLink() ){
 			return filesystem('readlink', destination).then(function(link){
-				if( link != destination ){
-					debug('remove previous link to', destination);
+				if( link[link.length -1] == '\\' || link[link.length -1] == '/' ) link = link.slice(0, -1);
+
+				if( link != source ){
+					debug('remove previous link to', link, 'because new link is', source);
 					return filesystem('unlink', destination);
 				}
 				else{
@@ -28,7 +30,7 @@ function symlink(source, destination){
 				}
 			});
 		}
-		// the file or folder exists, not supposed to happen
+		// the file or folder exists, we should rmdirRecursive or unlink file
 		else{
 			throw new Error(destination + 'exists, please delete this');
 		}
