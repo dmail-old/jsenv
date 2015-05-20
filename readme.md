@@ -1,28 +1,46 @@
-## env
+## jsenv
 
-Load & execute JavaScript modules accross platforms
+Load & execute JavaScript accross platforms
 
-## Node example
+## Example
 
 - `npm install -g jsenv`
-- `jsenv b`
+- `mkdir test & cd test`
+- `jsenv init`
+
+Run with node
+
+- `jsenv start`
 - hello world is logged in the terminal
 
-## Browser example
+With browser
 
-- `mkdir test & cd test & jsenv init`
-- open test/index.html in your browser
+- open test/index.html
 - hello world is logged in the console
 
-<Note that when running locally, ensure you are running from a local server or a browser with local XHR requests enabled. <If not you will get an error message.
+>Note that when running locally, ensure you are running from a local server or a browser with local XHR requests enabled. If not you will get an error message.
 
-<For Chrome you have to [start chrome using the flag --allow-file-access-from-files](http://www.chrome-allow-file-access-from-file.com)
+>For Chrome you have to [start chrome using the flag --allow-file-access-from-files](http://www.chrome-allow-file-access-from-file.com)
 
-<In Firefox this requires navigating to about:config, entering security.fileuri.strict_origin_policy in the filter box and toggling the option to false.
+>In Firefox this requires navigating to about:config, entering security.fileuri.strict_origin_policy in the filter box and toggling the option to false.
 
-## Module format
+## Source location
 
-A module is a javaScript source executed in a specific context, for example the following :
+You can include Javascript sources from different locations, the following include examples are valid.
+
+```javascript
+include('foo');
+include('./foo');
+include('../../foo');
+include('file:///C:/modules/foo');
+include('http://my-domain.com/modules/foo');
+include('https://external-domain.com/modules/foo');
+include('github://user@repo/foo#master');
+```
+
+## Function modules
+
+Included JavaScript create function modules. It's javaScript code wrapped in an anonymous function, for example the following :
 
 ```javascript
 var a = include('a');
@@ -44,25 +62,6 @@ ENV.load('a').then(function(){
 	}).call(ENV.global, module, module.include.bind(module));
 });
 ```
-
-## Source location
-
-Javascript sources can be fetched from different locations, for example the followings includes are valid.
-
-```javascript
-include('foo');
-include('./foo');
-include('../../foo');
-include('file:///C:/modules/foo');
-include('http://my-domain.com/modules/foo');
-include('https://external-domain.com/modules/foo');
-include('github://user@repo/foo#master');
-```
-
-## Installation
-
-- node : `npm install -g jsenv`<br />
-- browser : `<script src="modules/jsenv/index.js"></script>`
 
 ## ENV
 
