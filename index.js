@@ -61,10 +61,6 @@ function forOf(iterable, fn, bind){
 }
 
 (function(){
-	function shortenPath(filepath){
-		return require('path').relative(ENV.baseURI, filepath);
-	}
-
 	function debug(){
 		var args = Array.prototype.slice.call(arguments);
 
@@ -89,6 +85,698 @@ function forOf(iterable, fn, bind){
 			return (values[name] != null) ? values[name] : '';
 		});
 	}
+
+	var ENV = {};
+
+	// platforms
+	var Platform = create({
+		constructor: function(type, options){
+			this.type = String(type);
+			if( options ){
+				Object.assign(this, options);
+			}
+		},
+
+		toString: function(){
+			return '[Platform ' + this.type + ']';
+		},
+
+		getGlobal: function(){
+			return undefined;
+		},
+
+		getStorages: function(){
+			return {};
+		},
+
+		getBaseUrl: function(){
+			return '';
+		},
+
+		setup: function(){
+			ENV.onload();
+		}
+	});
+
+	Object.assign(ENV, {
+		platforms: [],
+		platform: null,
+		globalName: 'ENV',
+		global: null,
+		baseURI: null,
+		baseUrl: './', // relative to baseURI
+		requirements: [],
+		storages: {},
+
+		createPlatform: function(type, options){
+			return new Platform(type, options);
+		},
+
+		findPlatform: function(){
+			var platforms = this.platforms, i = platforms.length, platform = null;
+
+			while(i--){
+				platform = platforms[i];
+				if( platform.test.call(this) ){
+					break;
+				}
+				else{
+					platform = null;
+				}
+			}
+
+			return platform;
+		},
+
+		httpRequest: function(url, options){
+			options.method = 'GET';
+			return this.platform.request(url, options);
+		},
+
+		/*
+		live example
+		var giturl = 'https://api.github.com/repos/dmail/argv/contents/index.js?ref=master';
+		var xhr = new XMLHttpRequest();
+		var date = new Date();
+		date.setMonth(0);
+
+		xhr.open('GET', giturl);
+		xhr.setRequestHeader('accept', 'application/vnd.github.v3.raw');
+		xhr.setRequestHeader('if-modified-since', date.toUTCString());
+		xhr.send(null);
+		*/
+		githubRequest: function(url, options){
+			var parsed = new URI(url);
+			var version = parsed.hash ? parsed.hash.slice(1) : 'master';
+			if( version === 'latest' ) version = 'master';
+			var giturl = replace('https://api.github.com/repos/{user}/{repo}/contents/{path}?ref={version}', {
+				user: parsed.username,
+				repo: parsed.host,
+				path: parsed.pathname ? parsed.pathname.slice(1) : 'index.js',
+				version: version
+			});
+
+			options.method = 'GET';
+			options.headers = options.headers || {};
+			Object.assign(options.headers, {
+				'accept': 'application/vnd.github.v3.raw',
+				'User-Agent': 'jsenv' // https://developer.github.com/changes/2013-04-24-user-agent-required/
+			});
+
+			return this.platform.request(giturl, options);
+		},
+
+		init: function(){
+			this.platform = this.findPlatform();
+
+			if( this.platform == null ){
+				throw new Error('your javascript environment in not supported');
+			}
+
+			this.platform.name = this.platform.getName();
+			this.platform.version = this.platform.getVersion();
+
+			debug('platform :', this.platform.type, '(', this.platform.name, this.platform.version, ')');
+
+			this.platform.global = this.platform.getGlobal();
+			this.platform.storages = this.platform.getStorages();
+			this.platform.baseURL = this.platform.getBaseUrl();
+			this.platform.filename = this.platform.getSrc();
+			this.platform.dirname = this.platform.filename.slice(0, this.platform.filename.lastIndexOf('/'));
+
+			this.global = this.platform.global;
+			this.global[this.globalName] = this;
+			//this.request = this.platform.request.bind(this);
+
+			if( this.platform.request ){
+				this.storages.http = this.storages.https = {
+					get: this.httpRequest
+				};
+				this.storages.github = {
+					get: this.githubRequest
+				};
+			}
+
+			Object.assign(this.storages, this.platform.storages);
+			this.baseURI = this.platform.baseURL;
+		}
+	});
+
+	var browserPlatform = ENV.createPlatform('browser', {
+		test: function(){
+			return typeof window !== 'undefined';
+		},
+
+		getGlobal: function(){
+			return window;
+		},
+
+		getSrc: function(){
+			return document.scripts[document.scripts.length - 1].src;
+		},
+
+		getAgent: function(){
+			var ua = navigator.userAgent.toLowerCase();
+			var regex = /(opera|ie|firefox|chrome|version)[\s\/:]([\w\d\.]+)?.*?(safari|version[\s\/:]([\w\d\.]+)|$)/;
+			var UA = ua.match(regex) || [null, 'unknown', 0];
+			var name = UA[1] == 'version' ? UA[3] : UA[1];
+			var version;
+
+			// version
+			if( UA[1] == 'ie' && document.documentMode ) version = document.documentMode;
+			else if( UA[1] == 'opera' && UA[4] ) version = parseFloat(UA[4]);
+			else version = parseFloat(UA[2]);
+
+			return {
+				name: name,
+				version: version
+			};
+		},
+
+		getName: function(){
+			return this.getAgent().name;
+		},
+
+		getVersion: function(){
+			return this.getAgent().version;
+		},
+
+		getOs: function(){
+			return navigator.platform.toLowerCase();
+		},
+
+		getBaseUrl: function(){
+			var href = window.location.href.split('#')[0].split('?')[0];
+			var baseUrl = href.slice(0, href.lastIndexOf('/') + 1);
+
+			return baseUrl;
+		},
+
+		// browser must include script tag with the requirement
+		loadScript: function(url, done){
+			var script = document.createElement('script');
+
+			script.src = url;
+			script.type = 'text/javascript';
+			script.onload = function(){
+				done();
+			};
+			script.onerror = function(error){
+				done(error);
+			};
+
+			document.head.appendChild(script);
+		},
+
+		request: function(url, options){
+			// https://gist.github.com/mmazer/5404301
+			function parseHeaders(headerString){
+				var headers = {}, pairs, pair, index, i, j, key, value;
+
+				if( headerString ){
+					pairs = headerString.split('\u000d\u000a');
+					i = 0;
+					j = pairs.length;
+					for(;i<j;i++){
+						pair = pairs[i];
+						index = pair.indexOf('\u003a\u0020');
+						if( index > 0 ){
+							key = pair.slice(0, index);
+							value = pair.slice(index + 2);
+							headers[key] = value;
+						}
+					}
+				}
+
+				return headers;
+			}
+
+			return new Promise(function(resolve, reject){
+				var xhr = new XMLHttpRequest();
+
+				xhr.open(options.method, url);
+				if( options.headers ){
+					for(var key in options.headers){
+						xhr.setRequestHeader(key, options.headers[key]);
+					}
+				}
+
+				xhr.onerror = reject;
+				xhr.onreadystatechange = function(){
+					if( xhr.readyState === 4 ){
+						resolve({
+							status: xhr.status,
+							body: xhr.responseText,
+							headers: parseHeaders(xhr.getAllResponseHeaders())
+						});
+					}
+				};
+				xhr.send(options.body || null);
+			});
+		},
+
+		getStorages: function(){
+			var storages = {};
+
+			storages.file = {
+				get: function(url, options, env){
+					return env.storages.http.get(url, options, env).then(function(response){
+						// fix for browsers returning status == 0 for local file request
+						if( response.status === 0 ){
+							response.status = response.body ? 200 : 404;
+						}
+						return response;
+					});
+				}
+			};
+
+			return storages;
+		},
+
+		setup: function(){
+			function ready(){
+				var scripts = document.getElementsByTagName('script'), i = 0, j = scripts.length, script;
+				for(;i<j;i++){
+					script = scripts[i];
+					if( script.type === 'module' ){
+						ENV.module(script.innerHTML.slice(1)).catch(function(error){
+							setImmediate(function(){ throw error; });
+						});
+					}
+				}
+
+				ENV.onload();
+			}
+
+			function completed(){
+				document.removeEventListener('DOMContentLoaded', completed);
+				window.removeEventListener('load', completed);
+				ready();
+			}
+
+			if( document.readyState === 'complete' ){
+				setTimeout(ready);
+			}
+			else if( document.addEventListener ){
+				document.addEventListener('DOMContentLoaded', completed);
+				window.addEventListener('load', completed);
+			}
+		}
+	});
+
+	var processPlatform = ENV.createPlatform('process', {
+		test: function(){
+			return typeof process !== 'undefined';
+		},
+
+		getSrc: function(){
+			var src = 'file://' + __filename;
+
+			if( process.platform.match(/^win/) ){
+				src = src.replace(/\\/g, '/');
+			}
+
+			return src;
+		},
+
+		getName: function(){
+			return 'node';
+		},
+
+		getVersion: function(){
+			return process.version;
+		},
+
+		getOs: function(){
+			// https://nodejs.org/api/process.html#process_process_platform
+			// 'darwin', 'freebsd', 'linux', 'sunos', 'win32'
+			return process.platform;
+		},
+
+		getGlobal: function(){
+			return global;
+		},
+
+		getBaseUrl: function(){
+			var baseUrl = 'file://' + process.cwd() + '/';
+
+			if( process.platform.match(/^win/) ){
+				baseUrl = baseUrl.replace(/\\/g, '/');
+			}
+
+			return baseUrl;
+		},
+
+		// in node env requires it
+		loadScript: function(url, done){
+			var error = null;
+
+			if( url.indexOf('file://') === 0 ){
+				url = url.slice('file://'.length);
+			}
+
+			try{
+				require(url);
+			}
+			catch(e){
+				error = e;
+			}
+
+			done(error);
+		},
+
+		request: function(url, options){
+			var http = require('http');
+			var https = require('https');
+			var parse = require('url').parse;
+
+			var parsed = parse(url), secure;
+
+			Object.assign(options, parsed);
+
+			secure = options.protocol === 'https:';
+
+			options.port = secure ? 443 : 80;
+
+			return new Promise(function(resolve, reject){
+				var httpRequest = (secure ? https : http).request(options);
+
+				console.log(options.method, url);
+
+				function resolveWithHttpResponse(httpResponse){
+					var buffers = [], length;
+					httpResponse.addListener('data', function(chunk){
+						buffers.push(chunk);
+						length+= chunk.length;
+					});
+					httpResponse.addListener('end', function(){
+						resolve({
+							status: httpResponse.statusCode,
+							headers: httpResponse.headers,
+							body: Buffer.concat(buffers, length).toString()
+						});
+					});
+					httpResponse.addListener('error', reject);
+				}
+
+				httpRequest.addListener('response', resolveWithHttpResponse);
+				httpRequest.addListener('error', reject);
+				httpRequest.addListener('timeout', reject);
+				httpRequest.addListener('close', reject);
+
+				if( options.body ){
+					httpRequest.write(options.body);
+				}
+				else{
+					httpRequest.end();
+				}
+
+				// timeout
+				setTimeout(function(){ reject(new Error("Timeout")); }, 20000);
+			}).catch(function(error){
+				console.log('http request error', error);
+				throw error;
+			});
+		},
+
+		// For POST, PATCH, PUT, and DELETE requests,
+		// parameters not included in the URL should be encoded as JSON with a Content-Type of ‘application/json’
+		getStorages: function(){
+			var storages = {};
+
+			var fs = require('fs');
+			function readFile(file){
+				return new Promise(function(resolve, reject){
+					fs.readFile(file, function(error, source){
+						if( error ){
+							if( error.code == 'ENOENT' ){
+								resolve({
+									status: 404
+								});
+							}
+							else{
+								reject(error);
+							}
+						}
+						else{
+							fs.stat(file, function(error, stat){
+								if( error ){
+									reject(error);
+								}
+								else{
+									resolve({
+										status: 200,
+										body: source,
+										headers: {
+											'last-modified': stat.mtime
+										}
+									});
+								}
+							});
+						}
+					});
+				});
+			}
+
+			function writeFile(file, content){
+				return new Promise(function(resolve, reject){
+					fs.writeFile(file, content, function(error){
+						if( error ){
+							reject(error);
+						}
+						else{
+							resolve();
+						}
+					});
+				});
+			}
+
+			storages.file = {
+				get: function(url, options){
+					url = url.slice('file://'.length);
+					return readFile(url);
+				},
+
+				set: function(url, options){
+					url = url.slice('file://'.length);
+					return writeFile(url, options.body);
+				}
+			};
+
+			return storages;
+		}
+	});
+
+	ENV.platforms.push(browserPlatform);
+	ENV.platforms.push(processPlatform);
+	ENV.init();
+
+	// requirements
+	var Requirement = create({
+		path: null,
+
+		constructor: function(options){
+			if( typeof options === 'string' ){
+				options = {path: options};
+			}
+
+			Object.assign(this, options);
+		},
+
+		has: function(){
+			return false;
+		},
+
+		onload: function(){
+
+		}
+	});
+
+	Object.assign(ENV, {
+		need: function(requirement){
+			requirement = new Requirement(requirement);
+
+			if( this.requirementIndex ){
+				this.requirements.splice(this.requirementIndex, 0, requirement);
+			}
+			else{
+				this.requirements.push(requirement);
+			}
+		},
+
+		loadRequirements: function(){
+			this.global.forOf = this.forOf = forOf;
+
+			var self = this, requirements = this.requirements, requirement;
+
+			self.requirementIndex = 0;
+
+			function loadRequirement(){
+				if( requirement.has() ){
+					debug('already got the requirement', requirement.path);
+					nextRequirement();
+				}
+				else{
+					var url = requirement.path;
+					// / means relative to the jsenv dirname here, not the env root
+					if( url[0] === '/' ) url = self.platform.dirname + url;
+					else if( url.slice(0, 2) === './' ) url = self.baseURI + url.slice(2);
+
+					debug('get the requirement', url);
+					self.platform.loadScript(url, onRequirementLoad);
+				}
+			}
+
+			function onRequirementLoad(error){
+				if( error ){
+					throw new Error('An error occured during requirement loading at ' + requirement.path + '\n' + error);
+				}
+				requirement.onload();
+				debug(requirement.path, 'correctly loaded');
+				nextRequirement();
+			}
+
+			function nextRequirement(){
+				if( self.requirementIndex >= self.requirements.length ){
+					debug('all requirements loaded, calling setup phase');
+					self.setup();
+				}
+				else{
+					requirement = self.requirements[self.requirementIndex];
+					self.requirementIndex++;
+					loadRequirement();
+				}
+			}
+
+			nextRequirement();
+		}
+	});
+
+	ENV.need('/global.env.js');
+	ENV.need('./project.env.js');
+	[
+		'URI',
+		'setImmediate', // because required by promise
+		'Symbol', // because required by iterator
+		'Iterator', // because required by promise.all
+		'Promise' // because it's amazing
+	].forEach(function(requirement, index){
+		ENV.need({
+			path: '/polyfill/' + requirement + '.js',
+
+			has: function(){
+				return requirement in ENV.global;
+			},
+
+			onload: function(){
+				if( !this.has() ){
+					throw new Error('loading the file ' + this.path + 'did not polyfill ' + requirement);
+				}
+			}
+		});
+	});
+
+	// configs
+	Object.assign(ENV, {
+		extension: '.js',
+		configs: [],
+		mainModule: 'index',
+
+		getConfig: function(selector){
+			var configs = this.configs, i = 0, j = configs.length, config;
+
+			for(;i<j;i++){
+				config = configs[i];
+				if( config.selector === selector ) break;
+				else config = null;
+			}
+
+			return config;
+		},
+
+		config: function(selector, properties){
+			var config = this.getConfig(selector);
+
+			if( config ){
+				Object.assign(config.properties, properties);
+			}
+			else{
+				this.configs.push({
+					selector: selector,
+					properties: properties
+				});
+				// keep config sorted (the most specific config is the last applied)
+				this.configs = this.configs.sort(function(a, b){
+					return (a.path ? a.path.length : 0) - (b.path ? b.path.length : 0);
+				});
+			}
+		},
+
+		matchSelector: function(name, selector){
+			var starIndex = selector.indexOf('*'), match = false;
+
+			if( starIndex === -1 ){
+				if( name === selector ){
+					match =  true;
+				}
+			}
+			else{
+				var left = selector.slice(0, starIndex), right = selector.slice(starIndex + 1);
+				var nameLeft = name.slice(0, left.length), nameRight = name.slice(name.length - right.length);
+
+				if( left == nameLeft && right == nameRight ){
+					match = name.slice(left.length, name.length - right.length);
+				}
+			}
+
+			return match;
+		},
+
+		findMeta: function(normalizedName){
+			var meta = {path: normalizedName}, match;
+
+			this.configs.forEach(function(config){
+				match = this.matchSelector(normalizedName, config.selector);
+				if( match ){
+					Object.assign(meta, config.properties);
+
+					if( typeof match === 'string' ){
+						for(var key in meta){
+							meta[key] = meta[key].replace('*', match);
+						}
+					}
+				}
+			}, this);
+
+			// for wildcard match, add main only if the normalizedName does not contains '/' after the match
+			if( meta.main && (!match || typeof match != 'string' || match.indexOf('/') === -1) ){
+				meta.path+= '/' + meta.main;
+			}
+
+			return meta;
+		},
+
+		createModuleNotFoundError: function(location){
+			var error = new Error('module not found ' + location);
+			error.code = 'MODULE_NOT_FOUND';
+			return error;
+		},
+
+		setup: function(){
+			this.baseURL = new URI(this.baseURL, this.baseURI);
+			this.platform.setup.call(this);
+		},
+
+		onload: function(){
+			if( this.mainModule ){
+				this.include(this.mainModule).catch(function(error){
+					setImmediate(function(){
+						throw error;
+					});
+				});
+			}
+		}
+	});
 
 	// object representing an attempt to locate/fetch/translate/parse a module
 	var Module = create({
@@ -491,696 +1179,6 @@ function forOf(iterable, fn, bind){
 		}
 	});
 
-	var ENV = {};
-
-	// platforms
-	var Platform = create({
-		constructor: function(type, options){
-			this.type = String(type);
-			if( options ){
-				Object.assign(this, options);
-			}
-		},
-
-		toString: function(){
-			return '[Platform ' + this.type + ']';
-		},
-
-		getGlobal: function(){
-			return undefined;
-		},
-
-		getStorages: function(){
-			return {};
-		},
-
-		getBaseUrl: function(){
-			return '';
-		},
-
-		setup: function(){
-			ENV.onload();
-		}
-	});
-
-	var Requirement = create({
-		path: null,
-
-		constructor: function(options){
-			if( typeof options === 'string' ){
-				options = {path: options};
-			}
-
-			Object.assign(this, options);
-		},
-
-		has: function(){
-			return false;
-		},
-
-		onload: function(){
-
-		}
-	});
-
-	Object.assign(ENV, {
-		platforms: [],
-		platform: null,
-		globalName: 'ENV',
-		global: null,
-		baseURI: null,
-		baseUrl: './', // relative to baseURI
-		requirements: [],
-		storages: {},
-
-		createPlatform: function(type, options){
-			return new Platform(type, options);
-		},
-
-		findPlatform: function(){
-			var platforms = this.platforms, i = platforms.length, platform = null;
-
-			while(i--){
-				platform = platforms[i];
-				if( platform.test.call(this) ){
-					break;
-				}
-				else{
-					platform = null;
-				}
-			}
-
-			return platform;
-		},
-
-		httpRequest: function(url, options){
-			options.method = 'GET';
-			return this.platform.request(url, options);
-		},
-
-		/*
-		live example
-		var giturl = 'https://api.github.com/repos/dmail/argv/contents/index.js?ref=master';
-		var xhr = new XMLHttpRequest();
-		var date = new Date();
-		date.setMonth(0);
-
-		xhr.open('GET', giturl);
-		xhr.setRequestHeader('accept', 'application/vnd.github.v3.raw');
-		xhr.setRequestHeader('if-modified-since', date.toUTCString());
-		xhr.send(null);
-		*/
-		githubRequest: function(url, options){
-			var parsed = new URI(url);
-			var version = parsed.hash ? parsed.hash.slice(1) : 'master';
-			if( version === 'latest' ) version = 'master';
-			var giturl = replace('https://api.github.com/repos/{user}/{repo}/contents/{path}?ref={version}', {
-				user: parsed.username,
-				repo: parsed.host,
-				path: parsed.pathname ? parsed.pathname.slice(1) : 'index.js',
-				version: version
-			});
-
-			options.method = 'GET';
-			options.headers = options.headers || {};
-			Object.assign(options.headers, {
-				'accept': 'application/vnd.github.v3.raw',
-				'User-Agent': 'jsenv' // https://developer.github.com/changes/2013-04-24-user-agent-required/
-			});
-
-			return this.platform.request(giturl, options);
-		},
-
-		init: function(){
-			this.platform = this.findPlatform();
-
-			if( this.platform == null ){
-				throw new Error('your javascript environment in not supported');
-			}
-
-			this.platform.name = this.platform.getName();
-			this.platform.version = this.platform.getVersion();
-
-			debug('platform :', this.platform.type, '(', this.platform.name, this.platform.version, ')');
-
-			this.platform.global = this.platform.getGlobal();
-			this.platform.storages = this.platform.getStorages();
-			this.platform.baseURL = this.platform.getBaseUrl();
-			this.platform.filename = this.platform.getSrc();
-			this.platform.dirname = this.platform.filename.slice(0, this.platform.filename.lastIndexOf('/'));
-
-			this.global = this.platform.global;
-			this.global[this.globalName] = this;
-			//this.request = this.platform.request.bind(this);
-
-			if( this.platform.request ){
-				this.storages.http = this.storages.https = {
-					get: this.httpRequest
-				};
-				this.storages.github = {
-					get: this.githubRequest
-				};
-			}
-
-			Object.assign(this.storages, this.platform.storages);
-			this.baseURI = this.platform.baseURL;
-
-			this.loadRequirements();
-		},
-
-		need: function(requirement){
-			requirement = new Requirement(requirement);
-
-			if( this.requirementIndex ){
-				this.requirements.splice(this.requirementIndex, 0, requirement);
-			}
-			else{
-				this.requirements.push(requirement);
-			}
-		},
-
-		loadRequirements: function(){
-			this.global.forOf = this.forOf = forOf;
-
-			var self = this, requirements = this.requirements, requirement;
-
-			self.requirementIndex = 0;
-
-			function loadRequirement(){
-				if( requirement.has() ){
-					debug('already got the requirement', requirement.path);
-					nextRequirement();
-				}
-				else{
-					var url = requirement.path;
-					// / means relative to the jsenv dirname here, not the env root
-					if( url[0] === '/' ) url = self.platform.dirname + url;
-					else if( url.slice(0, 2) === './' ) url = self.baseURI + url.slice(2);
-
-					debug('get the requirement', url);
-					self.platform.loadScript(url, onRequirementLoad);
-				}
-			}
-
-			function onRequirementLoad(error){
-				if( error ){
-					throw new Error('An error occured during requirement loading at ' + requirement.path + '\n' + error);
-				}
-				requirement.onload();
-				debug(requirement.path, 'correctly loaded');
-				nextRequirement();
-			}
-
-			function nextRequirement(){
-				if( self.requirementIndex >= self.requirements.length ){
-					debug('all requirements loaded, calling setup phase');
-					self.setup();
-				}
-				else{
-					requirement = self.requirements[self.requirementIndex];
-					self.requirementIndex++;
-					loadRequirement();
-				}
-			}
-
-			nextRequirement();
-		},
-
-		setup: function(){
-			this.baseURL = new URI(this.baseURL, this.baseURI);
-			this.platform.setup.call(this);
-		}
-	});
-
-	ENV.need('/global.env.js');
-	ENV.need('./project.env.js');
-	[
-		'URI',
-		'setImmediate', // because required by promise
-		'Symbol', // because required by iterator
-		'Iterator', // because required by promise.all
-		'Promise' // because it's amazing
-	].forEach(function(requirement, index){
-		ENV.need({
-			path: '/polyfill/' + requirement + '.js',
-
-			has: function(){
-				return requirement in ENV.global;
-			},
-
-			onload: function(){
-				if( !this.has() ){
-					throw new Error('loading the file ' + this.path + 'did not polyfill ' + requirement);
-				}
-			}
-		});
-	});
-
-	var browserPlatform = ENV.createPlatform('browser', {
-		test: function(){
-			return typeof window !== 'undefined';
-		},
-
-		getGlobal: function(){
-			return window;
-		},
-
-		getSrc: function(){
-			return document.scripts[document.scripts.length - 1].src;
-		},
-
-		getAgent: function(){
-			var ua = navigator.userAgent.toLowerCase();
-			var regex = /(opera|ie|firefox|chrome|version)[\s\/:]([\w\d\.]+)?.*?(safari|version[\s\/:]([\w\d\.]+)|$)/;
-			var UA = ua.match(regex) || [null, 'unknown', 0];
-			var name = UA[1] == 'version' ? UA[3] : UA[1];
-			var version;
-
-			// version
-			if( UA[1] == 'ie' && document.documentMode ) version = document.documentMode;
-			else if( UA[1] == 'opera' && UA[4] ) version = parseFloat(UA[4]);
-			else version = parseFloat(UA[2]);
-
-			return {
-				name: name,
-				version: version
-			};
-		},
-
-		getName: function(){
-			return this.getAgent().name;
-		},
-
-		getVersion: function(){
-			return this.getAgent().version;
-		},
-
-		getOs: function(){
-			return navigator.platform.toLowerCase();
-		},
-
-		getBaseUrl: function(){
-			var href = window.location.href.split('#')[0].split('?')[0];
-			var baseUrl = href.slice(0, href.lastIndexOf('/') + 1);
-
-			return baseUrl;
-		},
-
-		// browser must include script tag with the requirement
-		loadScript: function(url, done){
-			var script = document.createElement('script');
-
-			script.src = url;
-			script.type = 'text/javascript';
-			script.onload = function(){
-				done();
-			};
-			script.onerror = function(error){
-				done(error);
-			};
-
-			document.head.appendChild(script);
-		},
-
-		request: function(url, options){
-			// https://gist.github.com/mmazer/5404301
-			function parseHeaders(headerString){
-				var headers = {}, pairs, pair, index, i, j, key, value;
-
-				if( headerString ){
-					pairs = headerString.split('\u000d\u000a');
-					i = 0;
-					j = pairs.length;
-					for(;i<j;i++){
-						pair = pairs[i];
-						index = pair.indexOf('\u003a\u0020');
-						if( index > 0 ){
-							key = pair.slice(0, index);
-							value = pair.slice(index + 2);
-							headers[key] = value;
-						}
-					}
-				}
-
-				return headers;
-			}
-
-			return new Promise(function(resolve, reject){
-				var xhr = new XMLHttpRequest();
-
-				xhr.open(options.method, url);
-				if( options.headers ){
-					for(var key in options.headers){
-						xhr.setRequestHeader(key, options.headers[key]);
-					}
-				}
-
-				xhr.onerror = reject;
-				xhr.onreadystatechange = function(){
-					if( xhr.readyState === 4 ){
-						resolve({
-							status: xhr.status,
-							body: xhr.responseText,
-							headers: parseHeaders(xhr.getAllResponseHeaders())
-						});
-					}
-				};
-				xhr.send(options.body || null);
-			});
-		},
-
-		getStorages: function(){
-			var storages = {};
-
-			storages.file = {
-				get: function(url, options, env){
-					return env.storages.http.get(url, options, env).then(function(response){
-						// fix for browsers returning status == 0 for local file request
-						if( response.status === 0 ){
-							response.status = response.body ? 200 : 404;
-						}
-						return response;
-					});
-				}
-			};
-
-			return storages;
-		},
-
-		setup: function(){
-			function ready(){
-				var scripts = document.getElementsByTagName('script'), i = 0, j = scripts.length, script;
-				for(;i<j;i++){
-					script = scripts[i];
-					if( script.type === 'module' ){
-						ENV.module(script.innerHTML.slice(1)).catch(function(error){
-							setImmediate(function(){ throw error; });
-						});
-					}
-				}
-
-				ENV.onload();
-			}
-
-			function completed(){
-				document.removeEventListener('DOMContentLoaded', completed);
-				window.removeEventListener('load', completed);
-				ready();
-			}
-
-			if( document.readyState === 'complete' ){
-				setTimeout(ready);
-			}
-			else if( document.addEventListener ){
-				document.addEventListener('DOMContentLoaded', completed);
-				window.addEventListener('load', completed);
-			}
-		}
-	});
-
-	var processPlatform = ENV.createPlatform('process', {
-		test: function(){
-			return typeof process !== 'undefined';
-		},
-
-		getSrc: function(){
-			var src = 'file://' + __filename;
-
-			if( process.platform.match(/^win/) ){
-				src = src.replace(/\\/g, '/');
-			}
-
-			return src;
-		},
-
-		getName: function(){
-			return 'node';
-		},
-
-		getVersion: function(){
-			return process.version;
-		},
-
-		getOs: function(){
-			// https://nodejs.org/api/process.html#process_process_platform
-			// 'darwin', 'freebsd', 'linux', 'sunos', 'win32'
-			return process.platform;
-		},
-
-		getGlobal: function(){
-			return global;
-		},
-
-		getBaseUrl: function(){
-			var baseUrl = 'file://' + process.cwd() + '/';
-
-			if( process.platform.match(/^win/) ){
-				baseUrl = baseUrl.replace(/\\/g, '/');
-			}
-
-			return baseUrl;
-		},
-
-		// in node env requires it
-		loadScript: function(url, done){
-			var error = null;
-
-			if( url.indexOf('file://') === 0 ){
-				url = url.slice('file://'.length);
-			}
-
-			try{
-				require(url);
-			}
-			catch(e){
-				error = e;
-			}
-
-			done(error);
-		},
-
-		request: function(url, options){
-			var http = require('http');
-			var https = require('https');
-			var parse = require('url').parse;
-
-			var parsed = parse(url), secure;
-
-			Object.assign(options, parsed);
-
-			secure = options.protocol === 'https:';
-
-			options.port = secure ? 443 : 80;
-
-			return new Promise(function(resolve, reject){
-				var httpRequest = (secure ? https : http).request(options);
-
-				console.log(options.method, url);
-
-				function resolveWithHttpResponse(httpResponse){
-					var buffers = [], length;
-					httpResponse.addListener('data', function(chunk){
-						buffers.push(chunk);
-						length+= chunk.length;
-					});
-					httpResponse.addListener('end', function(){
-						resolve({
-							status: httpResponse.statusCode,
-							headers: httpResponse.headers,
-							body: Buffer.concat(buffers, length).toString()
-						});
-					});
-					httpResponse.addListener('error', reject);
-				}
-
-				httpRequest.addListener('response', resolveWithHttpResponse);
-				httpRequest.addListener('error', reject);
-				httpRequest.addListener('timeout', reject);
-				httpRequest.addListener('close', reject);
-
-				if( options.body ){
-					httpRequest.write(options.body);
-				}
-				else{
-					httpRequest.end();
-				}
-
-				// timeout
-				setTimeout(function(){ reject(new Error("Timeout")); }, 20000);
-			}).catch(function(error){
-				console.log('http request error', error);
-				throw error;
-			});
-		},
-
-		// For POST, PATCH, PUT, and DELETE requests,
-		// parameters not included in the URL should be encoded as JSON with a Content-Type of ‘application/json’
-		getStorages: function(){
-			var storages = {};
-
-			var fs = require('fs');
-			function readFile(file){
-				return new Promise(function(resolve, reject){
-					fs.readFile(file, function(error, source){
-						if( error ){
-							if( error.code == 'ENOENT' ){
-								resolve({
-									status: 404
-								});
-							}
-							else{
-								reject(error);
-							}
-						}
-						else{
-							fs.stat(file, function(error, stat){
-								if( error ){
-									reject(error);
-								}
-								else{
-									resolve({
-										status: 200,
-										body: source,
-										headers: {
-											'last-modified': stat.mtime
-										}
-									});
-								}
-							});
-						}
-					});
-				});
-			}
-
-			function writeFile(file, content){
-				return new Promise(function(resolve, reject){
-					fs.writeFile(file, content, function(error){
-						if( error ){
-							reject(error);
-						}
-						else{
-							resolve();
-						}
-					});
-				});
-			}
-
-			storages.file = {
-				get: function(url, options){
-					url = url.slice('file://'.length);
-					return readFile(url);
-				},
-
-				set: function(url, options){
-					url = url.slice('file://'.length);
-					return writeFile(url, options.body);
-				}
-			};
-
-			return storages;
-		}
-	});
-
-	ENV.platforms.push(browserPlatform);
-	ENV.platforms.push(processPlatform);
-
-	// configs
-	Object.assign(ENV, {
-		extension: '.js',
-		configs: [],
-		mainModule: 'index',
-
-		getConfig: function(selector){
-			var configs = this.configs, i = 0, j = configs.length, config;
-
-			for(;i<j;i++){
-				config = configs[i];
-				if( config.selector === selector ) break;
-				else config = null;
-			}
-
-			return config;
-		},
-
-		config: function(selector, properties){
-			var config = this.getConfig(selector);
-
-			if( config ){
-				Object.assign(config.properties, properties);
-			}
-			else{
-				this.configs.push({
-					selector: selector,
-					properties: properties
-				});
-				// keep config sorted (the most specific config is the last applied)
-				this.configs = this.configs.sort(function(a, b){
-					return (a.path ? a.path.length : 0) - (b.path ? b.path.length : 0);
-				});
-			}
-		},
-
-		matchSelector: function(name, selector){
-			var starIndex = selector.indexOf('*'), match = false;
-
-			if( starIndex === -1 ){
-				if( name === selector ){
-					match =  true;
-				}
-			}
-			else{
-				var left = selector.slice(0, starIndex), right = selector.slice(starIndex + 1);
-				var nameLeft = name.slice(0, left.length), nameRight = name.slice(name.length - right.length);
-
-				if( left == nameLeft && right == nameRight ){
-					match = name.slice(left.length, name.length - right.length);
-				}
-			}
-
-			return match;
-		},
-
-		findMeta: function(normalizedName){
-			var meta = {path: normalizedName}, match;
-
-			this.configs.forEach(function(config){
-				match = this.matchSelector(normalizedName, config.selector);
-				if( match ){
-					Object.assign(meta, config.properties);
-
-					if( typeof match === 'string' ){
-						for(var key in meta){
-							meta[key] = meta[key].replace('*', match);
-						}
-					}
-				}
-			}, this);
-
-			// for wildcard match, add main only if the normalizedName does not contains '/' after the match
-			if( meta.main && (!match || typeof match != 'string' || match.indexOf('/') === -1) ){
-				meta.path+= '/' + meta.main;
-			}
-
-			return meta;
-		},
-
-		createModuleNotFoundError: function(location){
-			var error = new Error('module not found ' + location);
-			error.code = 'MODULE_NOT_FOUND';
-			return error;
-		},
-
-		onload: function(){
-			if( this.mainModule ){
-				this.include(this.mainModule).catch(function(error){
-					setImmediate(function(){
-						throw error;
-					});
-				});
-			}
-		}
-	});
-
 	// overrides
 	Object.assign(ENV, {
 		// https://github.com/systemjs/systemjs/blob/5ed14adca58abd3cf6c29783abd53af00b0c5bff/lib/package.js#L80
@@ -1387,5 +1385,5 @@ function forOf(iterable, fn, bind){
 	});
 	ENV = new ES6Loader(ENV);
 
-	ENV.init();
+	ENV.loadRequirements(); // load requirements then call setup()
 })();
