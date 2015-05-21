@@ -523,24 +523,35 @@ function forOf(iterable, fn, bind){
 		}
 	});
 
+	var Requirement = create({
+		path: null,
+
+		constructor: function(options){
+			if( typeof options === 'string' ){
+				options = {path: options};
+			}
+
+			Object.assign(this, options);
+		},
+
+		has: function(){
+			return false;
+		},
+
+		onload: function(){
+
+		}
+	});
+
 	Object.assign(ENV, {
 		platforms: [],
 		platform: null,
 		globalName: 'ENV',
 		global: null,
-		protocols: {},
-		baseUrl: null,
-		requirements: [
-			'URI',
-			'setImmediate', // because required by promise
-			'Symbol', // because required by iterator
-			'Iterator', // because required by promise.all
-			'Promise' // because it's amazing
-		],
-		files: [
-			'/global.env.js', // / means relative to the jsenv dirname here, not the env root
-			'./project.env.js'
-		],
+		protocols: {}, // à renommer storages avec name/get(url, options)/set(url, options)
+		baseURI: null,
+		baseUrl: './', // relative to baseURI
+		requirements: [],
 
 		createPlatform: function(type, options){
 			return new Platform(type, options);
@@ -560,87 +571,6 @@ function forOf(iterable, fn, bind){
 			}
 
 			return platform;
-		},
-
-		hasRequirement: function(requirement){
-			return requirement in this.global;
-		},
-
-		getRequirement: function(scriptUrl, done){
-			return this.platform.loadScript(scriptUrl, done);
-		},
-
-		polyfillRequirements: function(){
-			this.global.forOf = this.forOf = forOf;
-
-			var self = this, requirements = this.requirements, i = 0, j = requirements.length, requirement;
-
-			function fulFillRequirement(error){
-				if( error ){
-					throw new Error('An error occured during requirement load' +  error);
-				}
-				if( !self.hasRequirement(requirement) ){
-					throw new Error('getRequirement() did not fulfill ' + requirement + ' (not found in global)');
-				}
-				nextRequirement();
-			}
-
-			function nextRequirement(){
-				if( i >= j ){
-					debug('all requirements fullfilled, calling setup phase');
-					self.setup();
-				}
-				else{
-					requirement = requirements[i];
-					i++;
-
-					if( self.hasRequirement(requirement) ){
-						debug('already got the requirement', requirement);
-						nextRequirement();
-					}
-					else{
-						debug('get the requirement', requirement);
-						// '/test.js' mean relative to the root while './test.js' means relative to the base
-						var requirementUrl = self.platform.dirname + '/polyfill/' + requirement + '.js';
-						self.getRequirement(requirementUrl, fulFillRequirement);
-					}
-				}
-			}
-
-			nextRequirement();
-		},
-
-		setup: function(){
-			var self = this, files = this.files, i = 0, file;
-
-			function safeInclude(path){
-				if( path[0] === '/' ) path = self.platform.dirname + path;
-
-				return self.include(path).catch(function(error){
-					debug('optional module not found at', path);
-					if( error && error.code === 'MODULE_NOT_FOUND' ) return;
-					return Promise.reject(error);
-				});
-			}
-
-			// we do this in case an included file contains ENV.files.push()
-			function nextFile(){
-				if( i >= files.length ){
-					console.log('setup platform', self.platform.name);
-					self.platform.setup.call(self);
-				}
-				else{
-					file = files[i];
-					i++;
-					safeInclude(file).then(nextFile).catch(function(error){
-						setImmediate(function(){
-							throw error;
-						});
-					});
-				}
-			}
-
-			nextFile();
 		},
 
 		httpRequest: function(url, options){
@@ -710,10 +640,96 @@ function forOf(iterable, fn, bind){
 
 			Object.assign(this.protocols, this.platform.protocols);
 			this.baseURI = this.platform.baseURL;
-			this.baseURL = this.platform.baseURL; // allow baseurl to be relative to baseURI
 
-			this.polyfillRequirements();
+			this.loadRequirements();
 		},
+
+		need: function(requirement){
+			requirement = new Requirement(requirement);
+
+			if( this.requirementIndex ){
+				this.requirements.splice(this.requirementIndex, 0, requirement);
+			}
+			else{
+				this.requirements.push(requirement);
+			}
+		},
+
+		loadRequirements: function(){
+			this.global.forOf = this.forOf = forOf;
+
+			var self = this, requirements = this.requirements, requirement;
+
+			self.requirementIndex = 0;
+
+			function loadRequirement(){
+				if( requirement.has() ){
+					debug('already got the requirement', requirement.path);
+					nextRequirement();
+				}
+				else{
+					var url = requirement.path;
+					// / means relative to the jsenv dirname here, not the env root
+					if( url[0] === '/' ) url = self.platform.dirname + url;
+					else if( url.slice(0, 2) === './' ) url = self.baseURI + url.slice(2);
+
+					debug('get the requirement', url);
+					self.platform.loadScript(url, onRequirementLoad);
+				}
+			}
+
+			function onRequirementLoad(error){
+				if( error ){
+					throw new Error('An error occured during requirement loading at ' + requirement.path + '\n' + error);
+				}
+				requirement.onload();
+				debug(requirement.path, 'correctly loaded');
+				nextRequirement();
+			}
+
+			function nextRequirement(){
+				if( self.requirementIndex >= self.requirements.length ){
+					debug('all requirements loaded, calling setup phase');
+					self.setup();
+				}
+				else{
+					requirement = self.requirements[self.requirementIndex];
+					self.requirementIndex++;
+					loadRequirement();
+				}
+			}
+
+			nextRequirement();
+		},
+
+		setup: function(){
+			this.baseURL = new URI(this.baseURL, this.baseURI);
+			this.platform.setup.call(this);
+		}
+	});
+
+	ENV.need('/global.env.js');
+	ENV.need('./project.env.js');
+	[
+		'URI',
+		'setImmediate', // because required by promise
+		'Symbol', // because required by iterator
+		'Iterator', // because required by promise.all
+		'Promise' // because it's amazing
+	].forEach(function(requirement, index){
+		ENV.need({
+			path: '/polyfill/' + requirement + '.js',
+
+			has: function(){
+				return requirement in ENV.global;
+			},
+
+			onload: function(){
+				if( !this.has() ){
+					throw new Error('loading the file ' + this.path + 'did not polyfill ' + requirement);
+				}
+			}
+		});
 	});
 
 	var browserPlatform = ENV.createPlatform('browser', {
@@ -925,7 +941,9 @@ function forOf(iterable, fn, bind){
 		loadScript: function(url, done){
 			var error = null;
 
-			url = url.slice('file://'.length);
+			if( url.indexOf('file://') === 0 ){
+				url = url.slice('file://'.length);
+			}
 
 			try{
 				require(url);
