@@ -510,7 +510,7 @@ function forOf(iterable, fn, bind){
 			return undefined;
 		},
 
-		getSupportedProtocols: function(){
+		getStorages: function(){
 			return {};
 		},
 
@@ -548,10 +548,10 @@ function forOf(iterable, fn, bind){
 		platform: null,
 		globalName: 'ENV',
 		global: null,
-		protocols: {}, // à renommer storages avec name/get(url, options)/set(url, options)
 		baseURI: null,
 		baseUrl: './', // relative to baseURI
 		requirements: [],
+		storages: {},
 
 		createPlatform: function(type, options){
 			return new Platform(type, options);
@@ -624,7 +624,7 @@ function forOf(iterable, fn, bind){
 			debug('platform :', this.platform.type, '(', this.platform.name, this.platform.version, ')');
 
 			this.platform.global = this.platform.getGlobal();
-			this.platform.protocols = this.platform.getSupportedProtocols();
+			this.platform.storages = this.platform.getStorages();
 			this.platform.baseURL = this.platform.getBaseUrl();
 			this.platform.filename = this.platform.getSrc();
 			this.platform.dirname = this.platform.filename.slice(0, this.platform.filename.lastIndexOf('/'));
@@ -634,11 +634,15 @@ function forOf(iterable, fn, bind){
 			//this.request = this.platform.request.bind(this);
 
 			if( this.platform.request ){
-				this.protocols.http = this.protocols.https = this.httpRequest;
-				this.protocols.github = this.githubRequest;
+				this.storages.http = this.storages.https = {
+					get: this.httpRequest
+				};
+				this.storages.github = {
+					get: this.githubRequest
+				};
 			}
 
-			Object.assign(this.protocols, this.platform.protocols);
+			Object.assign(this.storages, this.platform.storages);
 			this.baseURI = this.platform.baseURL;
 
 			this.loadRequirements();
@@ -845,22 +849,22 @@ function forOf(iterable, fn, bind){
 			});
 		},
 
-		getSupportedProtocols: function(){
-			var protocols = {};
+		getStorages: function(){
+			var storages = {};
 
-			protocols.file = function(url, options){
-				debug('xhr', url);
-
-				return this.protocols.http.call(this, url, options).then(function(response){
-					// fix for browsers returning status == 0 for local file request
-					if( response.status === 0 ){
-						response.status = response.body ? 200 : 404;
-					}
-					return response;
-				});
+			storages.file = {
+				get: function(url, options, env){
+					return env.storages.http.get(url, options, env).then(function(response){
+						// fix for browsers returning status == 0 for local file request
+						if( response.status === 0 ){
+							response.status = response.body ? 200 : 404;
+						}
+						return response;
+					});
+				}
 			};
 
-			return protocols;
+			return storages;
 		},
 
 		setup: function(){
@@ -1011,15 +1015,13 @@ function forOf(iterable, fn, bind){
 
 		// For POST, PATCH, PUT, and DELETE requests,
 		// parameters not included in the URL should be encoded as JSON with a Content-Type of ‘application/json’
-		getSupportedProtocols: function(){
-			var protocols = {};
+		getStorages: function(){
+			var storages = {};
 
 			var fs = require('fs');
-			function fetchFile(location, options){
-				location = location.slice('file://'.length);
-
+			function readFile(file){
 				return new Promise(function(resolve, reject){
-					fs.readFile(location, function(error, source){
+					fs.readFile(file, function(error, source){
 						if( error ){
 							if( error.code == 'ENOENT' ){
 								resolve({
@@ -1031,7 +1033,7 @@ function forOf(iterable, fn, bind){
 							}
 						}
 						else{
-							fs.stat(location, function(error, stat){
+							fs.stat(file, function(error, stat){
 								if( error ){
 									reject(error);
 								}
@@ -1050,11 +1052,32 @@ function forOf(iterable, fn, bind){
 				});
 			}
 
-			protocols.file = function(location, options){
-				return fetchFile(location, options);
+			function writeFile(file, content){
+				return new Promise(function(resolve, reject){
+					fs.writeFile(file, content, function(error){
+						if( error ){
+							reject(error);
+						}
+						else{
+							resolve();
+						}
+					});
+				});
+			}
+
+			storages.file = {
+				get: function(url, options){
+					url = url.slice('file://'.length);
+					return readFile(url);
+				},
+
+				set: function(url, options){
+					url = url.slice('file://'.length);
+					return writeFile(url, options.body);
+				}
 			};
 
-			return protocols;
+			return storages;
 		}
 	});
 
@@ -1275,16 +1298,20 @@ function forOf(iterable, fn, bind){
 
 		fetch: function(module){
 			var location = module.address;
-			var protocol = location.protocol.slice(0, -1); // remove ':' from 'file:'
+			var storageName = location.protocol.slice(0, -1); // remove ':' from 'file:'
 			var href = String(location);
 			var options = {};
-
-			if( false === protocol in this.protocols ){
-				throw new Error('The protocol "' + protocol + '" is not supported');
-			}
+			var storage;
 
 			if( typeof href != 'string' ){
 				throw new TypeError('module url must a a string ' + href);
+			}
+			if( false === storageName in this.storages ){
+				throw new Error('storage not found : ' + storageName);
+			}
+			storage = this.storages[storageName];
+			if( !storage.get ){
+				throw new Error(storageName + ' storage has no get method');
 			}
 
 			if( module.meta.mtime ){
@@ -1293,7 +1320,7 @@ function forOf(iterable, fn, bind){
 				};
 			}
 
-			return this.protocols[protocol].call(this, href, options).then(function(response){
+			return storage.get(href, options, this).then(function(response){
 				if( response.status === 404 ){
 					throw this.createModuleNotFoundError(location);
 				}
