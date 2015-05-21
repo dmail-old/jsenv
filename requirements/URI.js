@@ -2,6 +2,8 @@
 	// https://gist.github.com/Yaffle/1088850
 	// https://github.com/Polymer/URL/blob/master/url.js
 	function parseURI(url){
+		if( typeof url === 'object' ) return url;
+
 		url = String(url);
 		url = url.replace(/^\s+|\s+$/g, ''); // trim
 

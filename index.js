@@ -1,3 +1,5 @@
+/* globals forOf */
+
 /*
 
 inspiration:
@@ -11,26 +13,12 @@ https://github.com/ModuleLoader/es6-module-loader/wiki/Extending-the-ES6-Loader
 
 http://medialize.github.io/URI.js/uri-template.html
 
+origin devrait passer par la config aussi
+github://dmail@argv -> github://dmail@argv/main.js si module.meta.main = "main"
+il faudrais limit appeler locate() sur origin
+
+
 */
-
-if( !Object.assign ){
-	Object.assign = function(object){
-		var i = 1, j = arguments.length, owner, keys, n, m, key;
-
-		for(;i<j;i++){
-			owner = arguments[i];
-			if( Object(owner) != owner ) continue;
-			keys = Object.keys(owner);
-			n = 0;
-			m = keys.length;
-
-			for(;n<m;n++){
-				key = keys[n];
-				object[key] = owner[key];
-			}
-		}
-	};
-}
 
 function forOf(iterable, fn, bind){
 	var method, iterator, next;
@@ -60,12 +48,31 @@ function forOf(iterable, fn, bind){
 	return this;
 }
 
+if( !Object.assign ){
+	Object.assign = function(object){
+		var i = 1, j = arguments.length, owner, keys, n, m, key;
+
+		for(;i<j;i++){
+			owner = arguments[i];
+			if( Object(owner) != owner ) continue;
+			keys = Object.keys(owner);
+			n = 0;
+			m = keys.length;
+
+			for(;n<m;n++){
+				key = keys[n];
+				object[key] = owner[key];
+			}
+		}
+	};
+}
+
 (function(){
 	function debug(){
 		var args = Array.prototype.slice.call(arguments);
 
 		args = args.map(function(arg){
-			if( arg instanceof Module ){
+			if( typeof Module != 'undefined' && arg instanceof Module ){
 				arg = arg.name ? String(arg.name) : 'anonymous module';
 			}
 			return arg;
@@ -86,11 +93,10 @@ function forOf(iterable, fn, bind){
 		});
 	}
 
-	var ENV = {};
-
 	// platforms
 	var Platform = create({
-		constructor: function(type, options){
+		constructor: function(env, type, options){
+			this.env = env;
 			this.type = String(type);
 			if( options ){
 				Object.assign(this, options);
@@ -106,17 +112,33 @@ function forOf(iterable, fn, bind){
 		},
 
 		getStorages: function(){
-			return {};
+			return [];
 		},
 
 		getBaseUrl: function(){
 			return '';
 		},
 
+		createStorage: function(name, options){
+			return new Storage(name, options);
+		},
+
+		findStorage: function(name){
+			var i = this.storages.length, storage;
+			while(i--){
+				storage = this.storages[i];
+				if( storage.name === name ) break;
+				else storage = null;
+			}
+			return storage;
+		},
+
 		setup: function(){
 			ENV.onload();
 		}
 	});
+
+	var ENV = {};
 
 	Object.assign(ENV, {
 		platforms: [],
@@ -126,10 +148,9 @@ function forOf(iterable, fn, bind){
 		baseURI: null,
 		baseUrl: './', // relative to baseURI
 		requirements: [],
-		storages: {},
 
 		createPlatform: function(type, options){
-			return new Platform(type, options);
+			return new Platform(this, type, options);
 		},
 
 		findPlatform: function(){
@@ -148,45 +169,7 @@ function forOf(iterable, fn, bind){
 			return platform;
 		},
 
-		httpRequest: function(url, options){
-			options.method = 'GET';
-			return this.platform.request(url, options);
-		},
-
-		/*
-		live example
-		var giturl = 'https://api.github.com/repos/dmail/argv/contents/index.js?ref=master';
-		var xhr = new XMLHttpRequest();
-		var date = new Date();
-		date.setMonth(0);
-
-		xhr.open('GET', giturl);
-		xhr.setRequestHeader('accept', 'application/vnd.github.v3.raw');
-		xhr.setRequestHeader('if-modified-since', date.toUTCString());
-		xhr.send(null);
-		*/
-		githubRequest: function(url, options){
-			var parsed = new URI(url);
-			var version = parsed.hash ? parsed.hash.slice(1) : 'master';
-			if( version === 'latest' ) version = 'master';
-			var giturl = replace('https://api.github.com/repos/{user}/{repo}/contents/{path}?ref={version}', {
-				user: parsed.username,
-				repo: parsed.host,
-				path: parsed.pathname ? parsed.pathname.slice(1) : 'index.js',
-				version: version
-			});
-
-			options.method = 'GET';
-			options.headers = options.headers || {};
-			Object.assign(options.headers, {
-				'accept': 'application/vnd.github.v3.raw',
-				'User-Agent': 'jsenv' // https://developer.github.com/changes/2013-04-24-user-agent-required/
-			});
-
-			return this.platform.request(giturl, options);
-		},
-
-		init: function(){
+		setupPlatform: function(){
 			this.platform = this.findPlatform();
 
 			if( this.platform == null ){
@@ -196,29 +179,7 @@ function forOf(iterable, fn, bind){
 			this.platform.name = this.platform.getName();
 			this.platform.version = this.platform.getVersion();
 
-			debug('platform :', this.platform.type, '(', this.platform.name, this.platform.version, ')');
-
-			this.platform.global = this.platform.getGlobal();
-			this.platform.storages = this.platform.getStorages();
-			this.platform.baseURL = this.platform.getBaseUrl();
-			this.platform.filename = this.platform.getSrc();
-			this.platform.dirname = this.platform.filename.slice(0, this.platform.filename.lastIndexOf('/'));
-
-			this.global = this.platform.global;
-			this.global[this.globalName] = this;
-			//this.request = this.platform.request.bind(this);
-
-			if( this.platform.request ){
-				this.storages.http = this.storages.https = {
-					get: this.httpRequest
-				};
-				this.storages.github = {
-					get: this.githubRequest
-				};
-			}
-
-			Object.assign(this.storages, this.platform.storages);
-			this.baseURI = this.platform.baseURL;
+			debug('platform type :', this.platform.type, '(', this.platform.name, this.platform.version, ')');
 		}
 	});
 
@@ -272,23 +233,7 @@ function forOf(iterable, fn, bind){
 			return baseUrl;
 		},
 
-		// browser must include script tag with the requirement
-		loadScript: function(url, done){
-			var script = document.createElement('script');
-
-			script.src = url;
-			script.type = 'text/javascript';
-			script.onload = function(){
-				done();
-			};
-			script.onerror = function(error){
-				done(error);
-			};
-
-			document.head.appendChild(script);
-		},
-
-		request: function(url, options){
+		getHttpRequestFactory: function(){
 			// https://gist.github.com/mmazer/5404301
 			function parseHeaders(headerString){
 				var headers = {}, pairs, pair, index, i, j, key, value;
@@ -311,36 +256,38 @@ function forOf(iterable, fn, bind){
 				return headers;
 			}
 
-			return new Promise(function(resolve, reject){
-				var xhr = new XMLHttpRequest();
+			return function(url, options){
+				return new Promise(function(resolve, reject){
+					var xhr = new XMLHttpRequest();
 
-				xhr.open(options.method, url);
-				if( options.headers ){
-					for(var key in options.headers){
-						xhr.setRequestHeader(key, options.headers[key]);
+					xhr.open(options.method, url);
+					if( options.headers ){
+						for(var key in options.headers){
+							xhr.setRequestHeader(key, options.headers[key]);
+						}
 					}
-				}
 
-				xhr.onerror = reject;
-				xhr.onreadystatechange = function(){
-					if( xhr.readyState === 4 ){
-						resolve({
-							status: xhr.status,
-							body: xhr.responseText,
-							headers: parseHeaders(xhr.getAllResponseHeaders())
-						});
-					}
-				};
-				xhr.send(options.body || null);
-			});
+					xhr.onerror = reject;
+					xhr.onreadystatechange = function(){
+						if( xhr.readyState === 4 ){
+							resolve({
+								status: xhr.status,
+								body: xhr.responseText,
+								headers: parseHeaders(xhr.getAllResponseHeaders())
+							});
+						}
+					};
+					xhr.send(options.body || null);
+				});
+			};
 		},
 
 		getStorages: function(){
-			var storages = {};
+			var self = this;
 
-			storages.file = {
-				get: function(url, options, env){
-					return env.storages.http.get(url, options, env).then(function(response){
+			var fileStorage = this.createStorage('file', {
+				get: function(url, options){
+					return self.findStorage('http').get(url, options).then(function(response){
 						// fix for browsers returning status == 0 for local file request
 						if( response.status === 0 ){
 							response.status = response.body ? 200 : 404;
@@ -348,9 +295,25 @@ function forOf(iterable, fn, bind){
 						return response;
 					});
 				}
+			});
+
+			return [fileStorage];
+		},
+
+		// browser must include script tag with the requirement
+		loadScript: function(url, done){
+			var script = document.createElement('script');
+
+			script.src = url;
+			script.type = 'text/javascript';
+			script.onload = function(){
+				done();
+			};
+			script.onerror = function(error){
+				done(error);
 			};
 
-			return storages;
+			document.head.appendChild(script);
 		},
 
 		setup: function(){
@@ -427,6 +390,67 @@ function forOf(iterable, fn, bind){
 			return baseUrl;
 		},
 
+		getHttpRequestFactory: function(){
+			return require('./utils/node-http-request');
+		},
+
+		getStorages: function(){
+			var filesystem = require('./utils/filesystem');
+
+			function readFile(file){
+				return filesystem('readFile', file);
+			}
+
+			function writeFile(file, content){
+				return filesystem('writeFile', file, content);
+			}
+
+			var fileStorage = this.createStorage('file', {
+				get: function(url, options){
+					url = String(url).slice('file://'.length);
+
+					return readFile(url).then(function(content){
+						return filesystem('stat', url).then(function(stat){
+							if( options && options.mtime && stat.mtime <= options.mtime ){
+								return {
+									status: 302,
+									mtime: stat.mtime
+								};
+							}
+							return {
+								status: 200,
+								body: content,
+								mtime: stat.mtime
+							};
+						});
+					}).catch(function(error){
+						if( error && error.code == 'ENOENT' ){
+							return {
+								status: 404
+							};
+						}
+						return {
+							status: 500,
+							body: error
+						};
+					});
+				},
+
+				set: function(url, body, options){
+					url = String(url).slice('file://'.length);
+					// writeFile doit faire un mkdir-to
+
+					var mkdirto = require('./utils/mkdir-to');
+
+					return mkdirto(url).then(function(){
+						return writeFile(url, body);
+					});
+				}
+			});
+
+			return [fileStorage];
+		},
+
 		// in node env requires it
 		loadScript: function(url, done){
 			var error = null;
@@ -443,133 +467,106 @@ function forOf(iterable, fn, bind){
 			}
 
 			done(error);
-		},
-
-		request: function(url, options){
-			var http = require('http');
-			var https = require('https');
-			var parse = require('url').parse;
-
-			var parsed = parse(url), secure;
-
-			Object.assign(options, parsed);
-
-			secure = options.protocol === 'https:';
-
-			options.port = secure ? 443 : 80;
-
-			return new Promise(function(resolve, reject){
-				var httpRequest = (secure ? https : http).request(options);
-
-				console.log(options.method, url);
-
-				function resolveWithHttpResponse(httpResponse){
-					var buffers = [], length;
-					httpResponse.addListener('data', function(chunk){
-						buffers.push(chunk);
-						length+= chunk.length;
-					});
-					httpResponse.addListener('end', function(){
-						resolve({
-							status: httpResponse.statusCode,
-							headers: httpResponse.headers,
-							body: Buffer.concat(buffers, length).toString()
-						});
-					});
-					httpResponse.addListener('error', reject);
-				}
-
-				httpRequest.addListener('response', resolveWithHttpResponse);
-				httpRequest.addListener('error', reject);
-				httpRequest.addListener('timeout', reject);
-				httpRequest.addListener('close', reject);
-
-				if( options.body ){
-					httpRequest.write(options.body);
-				}
-				else{
-					httpRequest.end();
-				}
-
-				// timeout
-				setTimeout(function(){ reject(new Error("Timeout")); }, 20000);
-			}).catch(function(error){
-				console.log('http request error', error);
-				throw error;
-			});
-		},
-
-		// For POST, PATCH, PUT, and DELETE requests,
-		// parameters not included in the URL should be encoded as JSON with a Content-Type of ‘application/json’
-		getStorages: function(){
-			var storages = {};
-
-			var fs = require('fs');
-			function readFile(file){
-				return new Promise(function(resolve, reject){
-					fs.readFile(file, function(error, source){
-						if( error ){
-							if( error.code == 'ENOENT' ){
-								resolve({
-									status: 404
-								});
-							}
-							else{
-								reject(error);
-							}
-						}
-						else{
-							fs.stat(file, function(error, stat){
-								if( error ){
-									reject(error);
-								}
-								else{
-									resolve({
-										status: 200,
-										body: source,
-										headers: {
-											'last-modified': stat.mtime
-										}
-									});
-								}
-							});
-						}
-					});
-				});
-			}
-
-			function writeFile(file, content){
-				return new Promise(function(resolve, reject){
-					fs.writeFile(file, content, function(error){
-						if( error ){
-							reject(error);
-						}
-						else{
-							resolve();
-						}
-					});
-				});
-			}
-
-			storages.file = {
-				get: function(url, options){
-					url = url.slice('file://'.length);
-					return readFile(url);
-				},
-
-				set: function(url, options){
-					url = url.slice('file://'.length);
-					return writeFile(url, options.body);
-				}
-			};
-
-			return storages;
 		}
 	});
 
 	ENV.platforms.push(browserPlatform);
 	ENV.platforms.push(processPlatform);
-	ENV.init();
+	ENV.setupPlatform();
+
+	// storages
+	var Storage = create({
+		constructor: function(name, options){
+			this.name = name;
+			Object.assign(this, options);
+		}
+	});
+	Object.assign(ENV, {
+		setupStorages: function(){
+			this.platform.storages = this.platform.getStorages();
+			this.platform.httpRequestFactory = this.platform.getHttpRequestFactory();
+
+			var httpRequestFactory = this.platform.httpRequestFactory;
+			function createHttpRequest(url, options){
+				if( options.mtime ){
+					options.headers = options.headers || {};
+					options.headers['if-modified-since'] = options.mtime;
+				}
+
+				return httpRequestFactory(url, options).then(function(response){
+					if( response.headers && 'last-modified' in response.headers ){
+						response.mtime = new Date(response.headers['last-modified']);
+					}
+					return response;
+				});
+			}
+
+			// httpRequestFactory is equivalent to auto create the http, https, github storages
+			if( httpRequestFactory ){
+				var httpStorage = this.platform.createStorage('http', {
+					get: function(url, options){
+						options.method = 'GET';
+						return createHttpRequest(url, options);
+					}
+				});
+
+				var httpsStorage = this.platform.createStorage('https', {
+					get: function(url, options){
+						options.method = 'GET';
+						return createHttpRequest(url, options);
+					}
+				});
+
+				/*
+				live example
+				var giturl = 'https://api.github.com/repos/dmail/argv/contents/index.js?ref=master';
+				var xhr = new XMLHttpRequest();
+				var date = new Date();
+				date.setMonth(0);
+
+				xhr.open('GET', giturl);
+				xhr.setRequestHeader('accept', 'application/vnd.github.v3.raw');
+				xhr.setRequestHeader('if-modified-since', date.toUTCString());
+				xhr.send(null);
+				*/
+				var githubStorage = this.platform.createStorage('github', {
+					get: function(url, options){
+						var parsed = new URI(url);
+						var giturl = replace('https://api.github.com/repos/{user}/{repo}/contents/{path}?ref={version}', {
+							user: parsed.username,
+							repo: parsed.host,
+							path: parsed.pathname ? parsed.pathname.slice(1) : 'index.js',
+							version:  parsed.hash ? parsed.hash.slice(1) : 'master'
+						});
+
+						options.method = 'GET';
+						options.headers = options.headers || {};
+						Object.assign(options.headers, {
+							'accept': 'application/vnd.github.v3.raw',
+							'User-Agent': 'jsenv' // https://developer.github.com/changes/2013-04-24-user-agent-required/
+						});
+
+						// For POST, PATCH, PUT, and DELETE requests,
+						// parameters not included in the URL should be encoded as JSON with a Content-Type of ‘application/json’
+
+						return createHttpRequest(giturl, options);
+					}
+				});
+
+				this.platform.storages.push(httpStorage, httpsStorage, githubStorage);
+			}
+
+			debug('readable storages :', this.platform.storages.reduce(function(previous, storage){
+				if( storage.get ) previous.push(storage.name);
+				return previous;
+			}, []));
+			debug('writable storages :', this.platform.storages.reduce(function(previous, storage){
+				if( storage.set ) previous.push(storage.name);
+				return previous;
+			}, []));
+		}
+	});
+	ENV.setupStorages();
 
 	// requirements
 	var Requirement = create({
@@ -613,7 +610,7 @@ function forOf(iterable, fn, bind){
 
 			function loadRequirement(){
 				if( requirement.has() ){
-					debug('already got the requirement', requirement.path);
+					debug('SKIP', requirement.path);
 					nextRequirement();
 				}
 				else{
@@ -622,7 +619,7 @@ function forOf(iterable, fn, bind){
 					if( url[0] === '/' ) url = self.platform.dirname + url;
 					else if( url.slice(0, 2) === './' ) url = self.baseURI + url.slice(2);
 
-					debug('get the requirement', url);
+					debug('REQUIRE', url);
 					self.platform.loadScript(url, onRequirementLoad);
 				}
 			}
@@ -632,13 +629,13 @@ function forOf(iterable, fn, bind){
 					throw new Error('An error occured during requirement loading at ' + requirement.path + '\n' + error);
 				}
 				requirement.onload();
-				debug(requirement.path, 'correctly loaded');
+				//debug('REQUIRED', requirement.path);
 				nextRequirement();
 			}
 
 			function nextRequirement(){
 				if( self.requirementIndex >= self.requirements.length ){
-					debug('all requirements loaded, calling setup phase');
+					//debug('ALL-REQUIREMENTS-COMPLETED');
 					self.setup();
 				}
 				else{
@@ -649,11 +646,25 @@ function forOf(iterable, fn, bind){
 			}
 
 			nextRequirement();
+		},
+
+		setupRequirements: function(){
+			this.platform.global = this.platform.getGlobal();
+			this.platform.baseURL = this.platform.getBaseUrl();
+			this.platform.filename = this.platform.getSrc();
+			this.platform.dirname = this.platform.filename.slice(0, this.platform.filename.lastIndexOf('/'));
+
+			this.global = this.platform.global;
+			this.global[this.globalName] = this;
+			this.baseURI = this.platform.baseURL;
+
+			this.loadRequirements();
 		}
 	});
 
-	ENV.need('/global.env.js');
+	ENV.need('/requirements/global.env.js');
 	ENV.need('./project.env.js');
+	// helpers
 	[
 		'URI',
 		'setImmediate', // because required by promise
@@ -662,7 +673,7 @@ function forOf(iterable, fn, bind){
 		'Promise' // because it's amazing
 	].forEach(function(requirement, index){
 		ENV.need({
-			path: '/polyfill/' + requirement + '.js',
+			path: '/requirements/' + requirement + '.js',
 
 			has: function(){
 				return requirement in ENV.global;
@@ -670,7 +681,7 @@ function forOf(iterable, fn, bind){
 
 			onload: function(){
 				if( !this.has() ){
-					throw new Error('loading the file ' + this.path + 'did not polyfill ' + requirement);
+					throw new Error('loading the file ' + this.path + 'did not provide ' + requirement);
 				}
 			}
 		});
@@ -769,6 +780,8 @@ function forOf(iterable, fn, bind){
 
 		onload: function(){
 			if( this.mainModule ){
+				debug('including the mainModule', this.mainModule);
+
 				this.include(this.mainModule).catch(function(error){
 					setImmediate(function(){
 						throw error;
@@ -1181,6 +1194,8 @@ function forOf(iterable, fn, bind){
 
 	// overrides
 	Object.assign(ENV, {
+		mode: 'run', // 'install', 'update', 'run'
+
 		// https://github.com/systemjs/systemjs/blob/5ed14adca58abd3cf6c29783abd53af00b0c5bff/lib/package.js#L80
 		// for package, we have to know the main entry
 		normalize: function(name, contextName, contextAddress){
@@ -1221,7 +1236,7 @@ function forOf(iterable, fn, bind){
 				return parts.join('/');
 			}
 
-			if( name === '.' && contextName ){
+			if( name[0] === '.' && contextName ){
 				if( contextName.match(absURLRegEx) ){
 					normalizedName = new URI(name, contextName);
 				}
@@ -1235,6 +1250,15 @@ function forOf(iterable, fn, bind){
 			else{
 				normalizedName = name;
 			}
+
+			/*
+			if( !name.match(absURLRegEx) && name[0] != '.' ){
+    			normalizedName = new URI(name, this.baseURL);
+    		}
+    		else{
+    			normalizedName = new URI(name, contextAddress || this.baseURL);
+    		}
+    		*/
 
 			normalizedName = String(normalizedName);
 			debug('normalizing', name, contextName, String(contextAddress), 'to', normalizedName);
@@ -1296,43 +1320,108 @@ function forOf(iterable, fn, bind){
 
 		fetch: function(module){
 			var location = module.address;
-			var storageName = location.protocol.slice(0, -1); // remove ':' from 'file:'
 			var href = String(location);
-			var options = {};
-			var storage;
 
 			if( typeof href != 'string' ){
 				throw new TypeError('module url must a a string ' + href);
 			}
-			if( false === storageName in this.storages ){
-				throw new Error('storage not found : ' + storageName);
-			}
-			storage = this.storages[storageName];
-			if( !storage.get ){
-				throw new Error(storageName + ' storage has no get method');
+
+			function findStorageFromURL(url){
+				url = new URI(url);
+				var name = url.protocol.slice(0, -1); // remove ':' from 'file:'
+				var storage = ENV.platform.findStorage(name);
+				if( !storage ){
+					throw new Error('storage not found : ' + name);
+				}
+				return storage;
 			}
 
-			if( module.meta.mtime ){
-				options.headers = {
-					'if-modified-since' : module.meta.mtime
-				};
+			var projectStorage = findStorageFromURL(href);
+			var origin = module.meta.origin;
+			if( !projectStorage.get ){
+				throw new Error('unsupported read from ' + href);
 			}
 
-			return storage.get(href, options, this).then(function(response){
+			var promise = projectStorage.get(href, {});
+
+			// install mode react on 404 to project by read from origin & write to project
+			if( this.mode === 'install' ){
+				promise = promise.then(function(response){
+					if( response.status != 404 ) return response;
+
+					if( !origin ){
+						throw new Error('origin not set for' + location);
+					}
+
+					debug(location + ' not found, trying to get it from', origin);
+
+					if( !projectStorage.set ){
+						throw new Error('unsupported write into ' + location);
+					}
+
+					var originStorage = findStorageFromURL(origin);
+					if( !originStorage.get ){
+						throw new Error('unsupported read from ' + origin);
+					}
+
+					return originStorage.get(origin, {}).then(function(response){
+						debug('origin responded with', response.status);
+
+						if( response.status != 200 ) return response;
+						return projectStorage.set(location, response.body, {}).then(function(){
+							return response;
+						});
+					});
+				});
+			}
+			// update mode react on 200 to project by read from origin & write to project when origin is more recent
+			else if( this.mode === 'update' ){
+				promise = promise.then(function(response){
+					if( response.status != 200 ) return response;
+					if( !origin ) return response;
+
+					var originStorage = findStorageFromURL(origin);
+					var request = {
+						mtime:  module.meta.mtime
+					};
+
+					var originPromise = originStorage.get(origin, request);
+
+					if( projectStorage.set ){
+						originPromise = originPromise.then(function(response){
+							if( response.status != 200 ) return response; // only on 200 status
+							return projectStorage.set(location, response.body, {}).then(function(){
+								return response;
+							});
+						});
+					}
+
+					return originPromise;
+				});
+			}
+
+			promise = promise.then(function(response){
+				module.meta.response = response;
+				if( response.mtime ){
+					module.meta.mtime = response.mtime;
+				}
+
 				if( response.status === 404 ){
 					throw this.createModuleNotFoundError(location);
 				}
 				else if( response.status != 200 ){
-					throw new Error('fetch failed with response status: ' + response.status);
-				}
-
-				module.meta.fetchHeaders = response.headers;
-				if( response.headers && 'last-modified' in response.headers ){
-					module.meta.mtime = response.headers['last-modified'];
+					if( response.status === 500 && response.body instanceof Error ){
+						throw response.body;
+					}
+					else{
+						throw new Error('fetch failed with response status: ' + response.status);
+					}
 				}
 
 				return response.body;
 			}.bind(this));
+
+			return promise;
 		},
 
 		collectDependencies: (function(){
@@ -1352,7 +1441,7 @@ function forOf(iterable, fn, bind){
 			var reDependency = /(?:^|;|\s+|ENV\.)include\(['"]([^'"]+)['"]\)/gm;
 			// for the moment remove regex for static ENV.include(), it's just an improvment but
 			// not required at all + it's strange for a dynamic ENV.include to be preloaded
-			//reDependency = /(?:^|;|\s+)include\(['"]([^'"]+)['"]\)/gm;
+			reDependency = /(?:^|;|\s+)include\(['"]([^'"]+)['"]\)/gm;
 			function collectIncludeCalls(str){
 				str = stripLineComment(stripBlockComment(str));
 
@@ -1385,5 +1474,5 @@ function forOf(iterable, fn, bind){
 	});
 	ENV = new ES6Loader(ENV);
 
-	ENV.loadRequirements(); // load requirements then call setup()
+	ENV.setupRequirements(); // load requirements then call setup()
 })();

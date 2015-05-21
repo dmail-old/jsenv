@@ -14,6 +14,8 @@ function createRequest(url, options){
 	return new Promise(function(resolve, reject){
 		var httpRequest = (secure ? https : http).request(options);
 
+		console.log(options.method, url);
+
 		function resolveWithHttpResponse(httpResponse){
 			var buffers = [], length;
 			httpResponse.addListener('data', function(chunk){
@@ -44,9 +46,6 @@ function createRequest(url, options){
 
 		// timeout
 		setTimeout(function(){ reject(new Error("Timeout")); }, 20000);
-	}).catch(function(error){
-		console.log('http request error', error);
-		throw error;
 	});
 }
 
