@@ -1,5 +1,3 @@
-/* globals forOf */
-
 /*
 
 inspiration:
@@ -505,7 +503,12 @@ if( !Object.assign ){
 			if( httpRequestFactory ){
 				var httpStorage = this.platform.createStorage('http', {
 					get: function(url, options){
-						options.method = 'GET';
+						options.method = options.method || 'GET';
+						return createHttpRequest(url, options);
+					},
+
+					set: function(url, options){
+						options.method = options.method || 'POST';
 						return createHttpRequest(url, options);
 					}
 				});
@@ -513,6 +516,11 @@ if( !Object.assign ){
 				var httpsStorage = this.platform.createStorage('https', {
 					get: function(url, options){
 						options.method = 'GET';
+						return createHttpRequest(url, options);
+					},
+
+					set: function(url, options){
+						options.method = options.method || 'POST';
 						return createHttpRequest(url, options);
 					}
 				});
@@ -536,7 +544,7 @@ if( !Object.assign ){
 							user: parsed.username,
 							repo: parsed.host,
 							path: parsed.pathname ? parsed.pathname.slice(1) : 'index.js',
-							version:  parsed.hash ? parsed.hash.slice(1) : 'master'
+							version: parsed.hash ? parsed.hash.slice(1) : 'master'
 						});
 
 						options.method = 'GET';
@@ -546,11 +554,36 @@ if( !Object.assign ){
 							'User-Agent': 'jsenv' // https://developer.github.com/changes/2013-04-24-user-agent-required/
 						});
 
-						// For POST, PATCH, PUT, and DELETE requests,
-						// parameters not included in the URL should be encoded as JSON with a Content-Type of ‘application/json’
-
 						return createHttpRequest(giturl, options);
+					},
+
+					/*
+					// For POST, PATCH, PUT, and DELETE requests,
+					// parameters not included in the URL should be encoded as JSON with a Content-Type of ‘application/json’
+					// https://developer.github.com/v3/repos/contents/#create-a-file
+					set: function(url, options){
+						// il faut s'authentifier
+						// il faut faire une requête get pour savoir si le fichier existe
+						// s'il existe envoyer PUT + sha
+						// sinon POST
+						var giturl = replace('https://api.github.com/repos/{user}/{repo}/contents/{path}', {
+
+						});
+
+						options.method = 'POST';
+						options.headers = options.headers || {};
+						options.body = JSON.stringify({
+							message: 'update ' + parsed.pathname,
+							content: btoa(options.body) // or new Buffer(options.body).toString('base64')
+							//name: ''// the name of the author for this commit
+							//email: '' // email of the author for this commit
+						});
+
+						Object.assign(options.headers, {
+							'User-Agent': 'jsenv'
+						});
 					}
+					*/
 				});
 
 				this.platform.storages.push(httpStorage, httpsStorage, githubStorage);
@@ -782,7 +815,12 @@ if( !Object.assign ){
 			if( this.mainModule ){
 				debug('including the mainModule', this.mainModule);
 
-				this.include(this.mainModule).catch(function(error){
+				this.main = this.createModule(this.mainModule);
+
+				this.main.then(function(){
+					this.main.parse();
+					this.main.execute();
+				}.bind(this)).catch(function(error){
 					setImmediate(function(){
 						throw error;
 					});
@@ -793,6 +831,8 @@ if( !Object.assign ){
 
 	// object representing an attempt to locate/fetch/translate/parse a module
 	var Module = create({
+		mode: 'run', // 'install', 'update', 'run'
+
 		loader: null, // loader used to load this module
 		status: null, // loading, loaded, failed
 		meta: null,
@@ -1194,8 +1234,6 @@ if( !Object.assign ){
 
 	// overrides
 	Object.assign(ENV, {
-		mode: 'run', // 'install', 'update', 'run'
-
 		// https://github.com/systemjs/systemjs/blob/5ed14adca58abd3cf6c29783abd53af00b0c5bff/lib/package.js#L80
 		// for package, we have to know the main entry
 		normalize: function(name, contextName, contextAddress){
@@ -1345,7 +1383,7 @@ if( !Object.assign ){
 			var promise = projectStorage.get(href, {});
 
 			// install mode react on 404 to project by read from origin & write to project
-			if( this.mode === 'install' ){
+			if( module.mode === 'install' ){
 				promise = promise.then(function(response){
 					if( response.status != 404 ) return response;
 
@@ -1375,7 +1413,7 @@ if( !Object.assign ){
 				});
 			}
 			// update mode react on 200 to project by read from origin & write to project when origin is more recent
-			else if( this.mode === 'update' ){
+			else if( module.mode === 'update' ){
 				promise = promise.then(function(response){
 					if( response.status != 200 ) return response;
 					if( !origin ) return response;
