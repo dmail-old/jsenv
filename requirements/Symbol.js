@@ -1,12 +1,10 @@
 /*
 this polyfil is not correct but it does the principal
 
-String(Symbol('test')) -> returns '@@test' instead of returning 'Symbol(test)'
-it can collides with existing property named '@@test'
+- String(Symbol('test')) -> returns 'Symbol(test)' which can collides with existing property named 'Symbol(test)'
+- And for(key in object) will enumerate the symbol properties
 
-The main goal is to have
-
-Symbol.iterator returning '@@iterator' in non es6 env
+But The main goal is to have String(Symbol.iterator) returning a string in non es6 env
 
 */
 
@@ -33,7 +31,7 @@ Symbol.iterator returning '@@iterator' in non es6 env
 
 			this.names[name] = true;
 
-			return '@@' + name;
+			return 'Symbol(' + name + ')';
 		},
 
 		toString: function(){
@@ -42,14 +40,6 @@ Symbol.iterator returning '@@iterator' in non es6 env
 
 		valueOf: function(){
 			return this;
-		},
-
-		'@@toPrimitive': function(){
-			return this;
-		},
-
-		'@@toStringTag': function(){
-			return 'Symbol';
 		}
 	};
 	HiddenSymbol.constructor.prototype = HiddenSymbol;
@@ -80,7 +70,7 @@ Symbol.iterator returning '@@iterator' in non es6 env
 	};
 
 	Symbol.is = function(item){
-		return item && (typeof item === 'symbol' || item['@@toStringTag'] === 'Symbol');
+		return item && (typeof item === 'symbol' || item[Symbol('toStringTag')] === 'Symbol');
 	};
 
 	Symbol.check = function(item){
@@ -111,6 +101,13 @@ Symbol.iterator returning '@@iterator' in non es6 env
 	].forEach(function(key){
 		Symbol[key] = Symbol(key);
 	});
+	
+	HiddenSymbol.prototype[Symbol.toPrimitive] = function(){
+		return this;
+	};
+	HiddenSymbol.prototype[Symbol.toStringTag] = function(){
+		return 'Symbol';
+	};
 
 	if( !global.Symbol ) global.Symbol = Symbol;
 
