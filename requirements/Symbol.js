@@ -37,6 +37,10 @@ But The main goal is to have String(Symbol.iterator) returning a string in non e
 		toString: function(){
 			return this.name;
 		},
+		
+		toSource: function(){
+			return 'Symbol("' + this.key + '")';
+		},
 
 		valueOf: function(){
 			return this;
