@@ -53,39 +53,7 @@ But The main goal is to have String(Symbol.iterator) returning a string in non e
 	};
 	Symbol.constructor.prototype = Symbol;
 	Symbol = Symbol.constructor;
-
-	Symbol.symbols = {};
-	Symbol.for = function(key){
-		var symbol;
-
-		if( key in this.symbols ){
-			symbol = this.symbols[key];
-		}
-		else{
-			symbol = Symbol(key);
-			this.symbols[key] = symbol;
-		}
-
-		return symbol;
-	};
-
-	Symbol.is = function(item){
-		return item && (typeof item === 'symbol' || item[Symbol('toStringTag')] === 'Symbol');
-	};
-
-	Symbol.check = function(item){
-		if( !this.is(item) ) throw new TypeError(item + 'is not a symbol');
-		return item;
-	};
-
-	Symbol.keyFor = function(symbol){
-		var key, symbols = this.symbols;
-
-		if( this.check(symbol) ){
-			for( key in symbols ) if( symbols[key] === symbol ) return key;
-		}
-	};
-
+	
 	[
 		'hasInstance',
 		'isConcatSpreadable',
@@ -107,6 +75,47 @@ But The main goal is to have String(Symbol.iterator) returning a string in non e
 	};
 	HiddenSymbol.prototype[Symbol.toStringTag] = function(){
 		return 'Symbol';
+	};
+	
+	Symbol.symbols = {};
+	Symbol.for = function(key){
+		var symbol, symbols = this.symbols;
+
+		if( key in symbols ){
+			symbol = symbols[key];
+		}
+		else{
+			symbol = Symbol(key);
+			symbols[key] = symbol;
+		}
+
+		return symbol;
+	};
+	
+	Symbol.is = function(item){
+		return item && (typeof item === 'symbol' || item[Symbol.toStringTag] === 'Symbol');
+	};
+
+	Symbol.check = function(item){
+		if( !this.is(item) ) throw new TypeError(item + ' is not a symbol');
+		return item;
+	};
+
+	Symbol.keyFor = function(symbol){
+		var key, symbols = this.symbols;
+
+		if( this.check(symbol) ){
+			for( key in symbols ){
+				if( symbols[key] === symbol ){
+					break;
+				}
+				else{
+					key = null;
+				}
+			}
+		}
+		
+		return key;
 	};
 
 	if( !global.Symbol ) global.Symbol = Symbol;
