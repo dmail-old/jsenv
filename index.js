@@ -91,6 +91,126 @@ if( !Object.assign ){
 		});
 	}
 
+	var jsenv = {};
+
+	// requirements
+	var Requirement = create({
+		path: null,
+
+		constructor: function(options){
+			if( typeof options === 'string' ){
+				options = {path: options};
+			}
+
+			Object.assign(this, options);
+		},
+
+		has: function(){
+			return false;
+		},
+
+		onResolve: function(){
+
+		},
+
+		onReject: function(error){
+			throw new Error('An error occured during requirement loading at ' + this.path + '\n' + error);
+		}
+	});
+
+	Object.assign(jsenv, {
+		requirements: [],
+
+		need: function(requirement){
+			requirement = new Requirement(requirement);
+
+			if( this.requirementIndex ){
+				this.requirements.splice(this.requirementIndex, 0, requirement);
+			}
+			else{
+				this.requirements.push(requirement);
+			}
+		},
+
+		loadRequirements: function(){
+			this.global.forOf = this.forOf = forOf;
+
+			var self = this, requirements = this.requirements, requirement;
+
+			self.requirementIndex = 0;
+
+			function loadRequirement(){
+				if( requirement.has() ){
+					debug('SKIP', requirement.path);
+					nextRequirement();
+				}
+				else{
+					var url = requirement.path;
+					// / means relative to the jsenv dirname here, not the env root
+					if( url[0] === '/' ) url = self.platform.dirname + url;
+					else if( url.slice(0, 2) === './' ) url = self.baseURI + url.slice(2);
+
+					debug('REQUIRE', url);
+					self.platform.loadScript(url, onRequirementLoad);
+				}
+			}
+
+			function onRequirementLoad(error){
+				if( error ){
+					requirement.onReject(error);
+				}
+				else{
+					requirement.onResolve();
+					//debug('REQUIRED', requirement.path);
+					nextRequirement();
+				}				
+			}
+
+			function nextRequirement(){
+				if( self.requirementIndex >= self.requirements.length ){
+					//debug('ALL-REQUIREMENTS-COMPLETED');
+					self.oncomplete();
+				}
+				else{
+					requirement = self.requirements[self.requirementIndex];
+					self.requirementIndex++;
+					loadRequirement();
+				}
+			}
+
+			nextRequirement();
+		},
+
+		setupRequirements: function(){
+			this.loadRequirements();
+		}
+	});
+
+	jsenv.need('/requirements/global.env.js');
+	jsenv.need('./project.env.js');
+	// helpers
+	[
+		'URI',
+		'setImmediate', // because required by promise
+		'Symbol', // because required by iterator
+		'Iterator', // because required by promise.all
+		'Promise' // because it's amazing
+	].forEach(function(requirement, index){
+		jsenv.need({
+			path: '/requirements/' + requirement + '.js',
+
+			has: function(){
+				return requirement in jsenv.global;
+			},
+
+			onResolve: function(){
+				if( !this.has() ){
+					throw new Error('loading the file ' + this.path + 'did not provide ' + requirement);
+				}
+			}
+		});
+	});
+
 	// platforms
 	var Platform = create({
 		constructor: function(env, type, options){
@@ -99,6 +219,18 @@ if( !Object.assign ){
 			if( options ){
 				Object.assign(this, options);
 			}
+		},
+
+		setup: function(){
+			this.name = this.getName();
+			this.version = this.getVersion();
+			debug('platform type :', this.type, '(', this.name, this.version, ')');
+
+			this.storages = this.getStorages();
+			this.global = this.getGlobal();
+			this.baseURL = this.getBaseUrl();
+			this.filename = this.getSrc();
+			this.dirname = this.filename.slice(0, this.filename.lastIndexOf('/'));
 		},
 
 		toString: function(){
@@ -131,21 +263,18 @@ if( !Object.assign ){
 			return storage;
 		},
 
-		setup: function(){
-			ENV.onload();
+		init: function(){
+			this.env.init();
 		}
 	});
 
-	var ENV = {};
-
-	Object.assign(ENV, {
+	Object.assign(jsenv, {
 		platforms: [],
 		platform: null,
 		globalName: 'ENV',
 		global: null,
 		baseURI: null,
 		baseUrl: './', // relative to baseURI
-		requirements: [],
 
 		createPlatform: function(type, options){
 			return new Platform(this, type, options);
@@ -156,7 +285,7 @@ if( !Object.assign ){
 
 			while(i--){
 				platform = platforms[i];
-				if( platform.test.call(this) ){
+				if( platform.is.call(this) ){
 					break;
 				}
 				else{
@@ -169,21 +298,24 @@ if( !Object.assign ){
 
 		setupPlatform: function(){
 			this.platform = this.findPlatform();
-
 			if( this.platform == null ){
 				throw new Error('your javascript environment in not supported');
 			}
+			this.platform.setup();
 
-			this.platform.name = this.platform.getName();
-			this.platform.version = this.platform.getVersion();
-
-			debug('platform type :', this.platform.type, '(', this.platform.name, this.platform.version, ')');
+			this.global = this.platform.global;
+			this.global[this.globalName] = this;
+			this.baseURI = this.platform.baseURL;
 		}
 	});
 
-	var browserPlatform = ENV.createPlatform('browser', {
-		test: function(){
+	var browserPlatform = jsenv.createPlatform('browser', {
+		is: function(){
 			return typeof window !== 'undefined';
+		},
+
+		setup: function(){
+			this.env.need('/platforms/http-browser.js');
 		},
 
 		getGlobal: function(){
@@ -231,55 +363,6 @@ if( !Object.assign ){
 			return baseUrl;
 		},
 
-		getHttpRequestFactory: function(){
-			// https://gist.github.com/mmazer/5404301
-			function parseHeaders(headerString){
-				var headers = {}, pairs, pair, index, i, j, key, value;
-
-				if( headerString ){
-					pairs = headerString.split('\u000d\u000a');
-					i = 0;
-					j = pairs.length;
-					for(;i<j;i++){
-						pair = pairs[i];
-						index = pair.indexOf('\u003a\u0020');
-						if( index > 0 ){
-							key = pair.slice(0, index);
-							value = pair.slice(index + 2);
-							headers[key] = value;
-						}
-					}
-				}
-
-				return headers;
-			}
-
-			return function(url, options){
-				return new Promise(function(resolve, reject){
-					var xhr = new XMLHttpRequest();
-
-					xhr.open(options.method, url);
-					if( options.headers ){
-						for(var key in options.headers){
-							xhr.setRequestHeader(key, options.headers[key]);
-						}
-					}
-
-					xhr.onerror = reject;
-					xhr.onreadystatechange = function(){
-						if( xhr.readyState === 4 ){
-							resolve({
-								status: xhr.status,
-								body: xhr.responseText,
-								headers: parseHeaders(xhr.getAllResponseHeaders())
-							});
-						}
-					};
-					xhr.send(options.body || null);
-				});
-			};
-		},
-
 		getStorages: function(){
 			var self = this;
 
@@ -314,19 +397,21 @@ if( !Object.assign ){
 			document.head.appendChild(script);
 		},
 
-		setup: function(){
+		init: function(){
+			var self = this;
+
 			function ready(){
 				var scripts = document.getElementsByTagName('script'), i = 0, j = scripts.length, script;
 				for(;i<j;i++){
 					script = scripts[i];
 					if( script.type === 'module' ){
-						ENV.module(script.innerHTML.slice(1)).catch(function(error){
+						self.env.module(script.innerHTML.slice(1)).catch(function(error){
 							setImmediate(function(){ throw error; });
 						});
 					}
 				}
 
-				ENV.onload();
+				self.env.init();
 			}
 
 			function completed(){
@@ -344,10 +429,15 @@ if( !Object.assign ){
 			}
 		}
 	});
+	jsenv.platforms.push(browserPlatform);
 
-	var processPlatform = ENV.createPlatform('process', {
-		test: function(){
+	var processPlatform = jsenv.createPlatform('process', {
+		is: function(){
 			return typeof process !== 'undefined';
+		},
+
+		setup: function(){
+			this.env.need('/platforms/http-process.js');
 		},
 
 		getSrc: function(){
@@ -386,10 +476,6 @@ if( !Object.assign ){
 			}
 
 			return baseUrl;
-		},
-
-		getHttpRequestFactory: function(){
-			return require('./utils/node-http-request');
 		},
 
 		getStorages: function(){
@@ -466,11 +552,8 @@ if( !Object.assign ){
 
 			done(error);
 		}
-	});
-
-	ENV.platforms.push(browserPlatform);
-	ENV.platforms.push(processPlatform);
-	ENV.setupPlatform();
+	});	
+	jsenv.platforms.push(processPlatform);
 
 	// storages
 	var Storage = create({
@@ -479,11 +562,8 @@ if( !Object.assign ){
 			Object.assign(this, options);
 		}
 	});
-	Object.assign(ENV, {
+	Object.assign(jsenv, {
 		setupStorages: function(){
-			this.platform.storages = this.platform.getStorages();
-			this.platform.httpRequestFactory = this.platform.getHttpRequestFactory();
-
 			var httpRequestFactory = this.platform.httpRequestFactory;
 			function createHttpRequest(url, options){
 				if( options.mtime ){
@@ -599,129 +679,9 @@ if( !Object.assign ){
 			}, []));
 		}
 	});
-	ENV.setupStorages();
-
-	// requirements
-	var Requirement = create({
-		path: null,
-
-		constructor: function(options){
-			if( typeof options === 'string' ){
-				options = {path: options};
-			}
-
-			Object.assign(this, options);
-		},
-
-		has: function(){
-			return false;
-		},
-
-		onload: function(){
-
-		}
-	});
-
-	Object.assign(ENV, {
-		need: function(requirement){
-			requirement = new Requirement(requirement);
-
-			if( this.requirementIndex ){
-				this.requirements.splice(this.requirementIndex, 0, requirement);
-			}
-			else{
-				this.requirements.push(requirement);
-			}
-		},
-
-		loadRequirements: function(){
-			this.global.forOf = this.forOf = forOf;
-
-			var self = this, requirements = this.requirements, requirement;
-
-			self.requirementIndex = 0;
-
-			function loadRequirement(){
-				if( requirement.has() ){
-					debug('SKIP', requirement.path);
-					nextRequirement();
-				}
-				else{
-					var url = requirement.path;
-					// / means relative to the jsenv dirname here, not the env root
-					if( url[0] === '/' ) url = self.platform.dirname + url;
-					else if( url.slice(0, 2) === './' ) url = self.baseURI + url.slice(2);
-
-					debug('REQUIRE', url);
-					self.platform.loadScript(url, onRequirementLoad);
-				}
-			}
-
-			function onRequirementLoad(error){
-				if( error ){
-					throw new Error('An error occured during requirement loading at ' + requirement.path + '\n' + error);
-				}
-				requirement.onload();
-				//debug('REQUIRED', requirement.path);
-				nextRequirement();
-			}
-
-			function nextRequirement(){
-				if( self.requirementIndex >= self.requirements.length ){
-					//debug('ALL-REQUIREMENTS-COMPLETED');
-					self.setup();
-				}
-				else{
-					requirement = self.requirements[self.requirementIndex];
-					self.requirementIndex++;
-					loadRequirement();
-				}
-			}
-
-			nextRequirement();
-		},
-
-		setupRequirements: function(){
-			this.platform.global = this.platform.getGlobal();
-			this.platform.baseURL = this.platform.getBaseUrl();
-			this.platform.filename = this.platform.getSrc();
-			this.platform.dirname = this.platform.filename.slice(0, this.platform.filename.lastIndexOf('/'));
-
-			this.global = this.platform.global;
-			this.global[this.globalName] = this;
-			this.baseURI = this.platform.baseURL;
-
-			this.loadRequirements();
-		}
-	});
-
-	ENV.need('/requirements/global.env.js');
-	ENV.need('./project.env.js');
-	// helpers
-	[
-		'URI',
-		'setImmediate', // because required by promise
-		'Symbol', // because required by iterator
-		'Iterator', // because required by promise.all
-		'Promise' // because it's amazing
-	].forEach(function(requirement, index){
-		ENV.need({
-			path: '/requirements/' + requirement + '.js',
-
-			has: function(){
-				return requirement in ENV.global;
-			},
-
-			onload: function(){
-				if( !this.has() ){
-					throw new Error('loading the file ' + this.path + 'did not provide ' + requirement);
-				}
-			}
-		});
-	});
 
 	// configs
-	Object.assign(ENV, {
+	Object.assign(jsenv, {
 		extension: '.js',
 		configs: [],
 		mainModule: 'index',
@@ -1233,7 +1193,7 @@ if( !Object.assign ){
 	});
 
 	// overrides
-	Object.assign(ENV, {
+	Object.assign(jsenv, {
 		// https://github.com/systemjs/systemjs/blob/5ed14adca58abd3cf6c29783abd53af00b0c5bff/lib/package.js#L80
 		// for package, we have to know the main entry
 		normalize: function(name, contextName, contextAddress){
@@ -1367,74 +1327,74 @@ if( !Object.assign ){
 			function findStorageFromURL(url){
 				url = new URI(url);
 				var name = url.protocol.slice(0, -1); // remove ':' from 'file:'
-				var storage = ENV.platform.findStorage(name);
+				var storage = jsenv.platform.findStorage(name);
 				if( !storage ){
 					throw new Error('storage not found : ' + name);
 				}
 				return storage;
 			}
 
-			var projectStorage = findStorageFromURL(href);
-			var origin = module.meta.origin;
-			if( !projectStorage.get ){
+			var toStorage = findStorageFromURL(href);
+			var from = module.meta.from;
+			if( !toStorage.get ){
 				throw new Error('unsupported read from ' + href);
 			}
 
-			var promise = projectStorage.get(href, {});
+			var promise = toStorage.get(href, {});
 
-			// install mode react on 404 to project by read from origin & write to project
+			// install mode react on 404 to project by read at from & write at to
 			if( module.mode === 'install' ){
 				promise = promise.then(function(response){
 					if( response.status != 404 ) return response;
 
-					if( !origin ){
-						throw new Error('origin not set for' + location);
+					if( !from ){
+						throw new Error('from not set for' + location);
 					}
 
-					debug(location + ' not found, trying to get it from', origin);
+					debug(location + ' not found, trying to get it from', from);
 
-					if( !projectStorage.set ){
+					if( !toStorage.set ){
 						throw new Error('unsupported write into ' + location);
 					}
 
-					var originStorage = findStorageFromURL(origin);
-					if( !originStorage.get ){
-						throw new Error('unsupported read from ' + origin);
+					var fromStorage = findStorageFromURL(from);
+					if( !fromStorage.get ){
+						throw new Error('unsupported read from ' + from);
 					}
 
-					return originStorage.get(origin, {}).then(function(response){
-						debug('origin responded with', response.status);
+					return fromStorage.get(from, {}).then(function(response){
+						debug('from responded with', response.status);
 
 						if( response.status != 200 ) return response;
-						return projectStorage.set(location, response.body, {}).then(function(){
+						return toStorage.set(location, response.body, {}).then(function(){
 							return response;
 						});
 					});
 				});
 			}
-			// update mode react on 200 to project by read from origin & write to project when origin is more recent
+			// update mode react on 200 to project by read at from & write at to when from is more recent
 			else if( module.mode === 'update' ){
 				promise = promise.then(function(response){
 					if( response.status != 200 ) return response;
-					if( !origin ) return response;
+					if( !from ) return response;
 
-					var originStorage = findStorageFromURL(origin);
+					var fromStorage = findStorageFromURL(from);
 					var request = {
 						mtime:  module.meta.mtime
 					};
 
-					var originPromise = originStorage.get(origin, request);
+					var fromPromise = fromStorage.get(from, request);
 
-					if( projectStorage.set ){
-						originPromise = originPromise.then(function(response){
+					if( toStorage.set ){
+						fromPromise = fromPromise.then(function(response){
 							if( response.status != 200 ) return response; // only on 200 status
-							return projectStorage.set(location, response.body, {}).then(function(){
+							return toStorage.set(location, response.body, {}).then(function(){
 								return response;
 							});
 						});
 					}
 
-					return originPromise;
+					return fromPromise;
 				});
 			}
 
@@ -1510,7 +1470,22 @@ if( !Object.assign ){
 			return module.parsed.call(this.global, module, module.include.bind(module));
 		}
 	});
-	ENV = new ES6Loader(ENV);
+	jsenv = new ES6Loader(jsenv);
 
-	ENV.setupRequirements(); // load requirements then call setup()
+	jsenv.setup = function(){
+		this.setupPlatform();
+		this.setupRequirements();
+	};
+
+	jsenv.oncomplete = function(){
+		this.setupStorages();
+		this.platform.init();
+	};
+
+	// noop, override at will
+	jsenv.init = function(){
+
+	};
+
+	jsenv.setup();
 })();
