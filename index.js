@@ -8,13 +8,9 @@ https://github.com/ModuleLoader/es6-module-loader/blob/master/src/loader.js#L885
 https://gist.github.com/dherman/7568080
 https://github.com/ModuleLoader/es6-module-loader/wiki/Extending-the-ES6-Loader
 
-
-http://medialize.github.io/URI.js/uri-template.html
-
 origin devrait passer par la config aussi
 github://dmail@argv -> github://dmail@argv/main.js si module.meta.main = "main"
 il faudrais limit appeler locate() sur origin
-
 
 */
 
@@ -46,6 +42,31 @@ function forOf(iterable, fn, bind){
 	return this;
 }
 
+function debug(){
+	var args = Array.prototype.slice.call(arguments);
+
+	args = args.map(function(arg){
+		if( arg && typeof arg == 'object' && 'name' in arg ){
+			arg = arg.name ? String(arg.name) : 'anonymous module';
+		}
+		return arg;
+	});
+
+	console.log.apply(console, args);
+}
+
+function create(proto){
+	proto.constructor.prototype = proto;
+	return proto.constructor;
+}
+
+function replace(string, values){
+	return string.replace((/\\?\{([^{}]+)\}/g), function(match, name){
+		if( match.charAt(0) == '\\' ) return match.slice(1);
+		return (values[name] != null) ? values[name] : '';
+	});
+}
+
 if( !Object.assign ){
 	Object.assign = function(object){
 		var i = 1, j = arguments.length, owner, keys, n, m, key;
@@ -66,32 +87,9 @@ if( !Object.assign ){
 }
 
 (function(){
-	function debug(){
-		var args = Array.prototype.slice.call(arguments);
-
-		args = args.map(function(arg){
-			if( typeof Module != 'undefined' && arg instanceof Module ){
-				arg = arg.name ? String(arg.name) : 'anonymous module';
-			}
-			return arg;
-		});
-
-		console.log.apply(console, args);
-	}
-
-	function create(proto){
-		proto.constructor.prototype = proto;
-		return proto.constructor;
-	}
-
-	function replace(string, values){
-		return string.replace((/\\?\{([^{}]+)\}/g), function(match, name){
-			if( match.charAt(0) == '\\' ) return match.slice(1);
-			return (values[name] != null) ? values[name] : '';
-		});
-	}
-
-	var jsenv = {};
+	var jsenv = {
+		state: 'created'
+	};
 
 	// requirements
 	var Requirement = create({
@@ -124,11 +122,14 @@ if( !Object.assign ){
 		need: function(requirement){
 			requirement = new Requirement(requirement);
 
-			if( this.requirementIndex ){
+			if( this.state == 'created' ){
+				this.requirements.push(requirement);
+			}
+			else if( this.state == 'loading' ){
 				this.requirements.splice(this.requirementIndex, 0, requirement);
 			}
 			else{
-				this.requirements.push(requirement);
+				throw new Error('you can declare a requirement only before or during loading');
 			}
 		},
 
@@ -151,7 +152,7 @@ if( !Object.assign ){
 					else if( url.slice(0, 2) === './' ) url = self.baseURI + url.slice(2);
 
 					debug('REQUIRE', url);
-					self.platform.loadScript(url, onRequirementLoad);
+					self.platform.load(url, onRequirementLoad);
 				}
 			}
 
@@ -163,13 +164,13 @@ if( !Object.assign ){
 					requirement.onResolve();
 					//debug('REQUIRED', requirement.path);
 					nextRequirement();
-				}				
+				}
 			}
 
 			function nextRequirement(){
 				if( self.requirementIndex >= self.requirements.length ){
 					//debug('ALL-REQUIREMENTS-COMPLETED');
-					self.oncomplete();
+					self.onload();
 				}
 				else{
 					requirement = self.requirements[self.requirementIndex];
@@ -179,36 +180,16 @@ if( !Object.assign ){
 			}
 
 			nextRequirement();
-		},
-
-		setupRequirements: function(){
-			this.loadRequirements();
 		}
 	});
 
-	jsenv.need('/requirements/global.env.js');
-	jsenv.need('./project.env.js');
-	// helpers
-	[
-		'URI',
-		'setImmediate', // because required by promise
-		'Symbol', // because required by iterator
-		'Iterator', // because required by promise.all
-		'Promise' // because it's amazing
-	].forEach(function(requirement, index){
-		jsenv.need({
-			path: '/requirements/' + requirement + '.js',
-
-			has: function(){
-				return requirement in jsenv.global;
-			},
-
-			onResolve: function(){
-				if( !this.has() ){
-					throw new Error('loading the file ' + this.path + 'did not provide ' + requirement);
-				}
-			}
-		});
+	// storages
+	var Storage = create({
+		constructor: function(platform, name, options){
+			this.platform = platform;
+			this.name = name;
+			Object.assign(this, options);
+		}
 	});
 
 	// platforms
@@ -226,11 +207,140 @@ if( !Object.assign ){
 			this.version = this.getVersion();
 			debug('platform type :', this.type, '(', this.name, this.version, ')');
 
-			this.storages = this.getStorages();
 			this.global = this.getGlobal();
 			this.baseURL = this.getBaseUrl();
 			this.filename = this.getSrc();
 			this.dirname = this.filename.slice(0, this.filename.lastIndexOf('/'));
+		},
+
+		createModuleHttpRequest: function(url, options){
+			if( options.mtime ){
+				options.headers = options.headers || {};
+				options.headers['if-modified-since'] = options.mtime;
+			}
+
+			return this.httpRequestFactory(url, options).then(function(response){
+				if( response.headers && 'last-modified' in response.headers ){
+					response.mtime = new Date(response.headers['last-modified']);
+				}
+				return response;
+			});
+		},
+
+		createHttpStorage: function(){
+			return this.createStorage('http', {
+				get: function(url, options){
+					options.method = options.method || 'GET';
+					return this.platform.env.createModuleHttpRequest(url, options);
+				},
+
+				set: function(url, options){
+					options.method = options.method || 'POST';
+					return this.platform.env.createModuleHttpRequest(url, options);
+				}
+			});
+		},
+
+		createHttpsStorage: function(){
+			return this.createStorage('https', {
+				get: function(url, options){
+					options.method = 'GET';
+					return this.platform.env.createHttpRequest(url, options);
+				},
+
+				set: function(url, options){
+					options.method = options.method || 'POST';
+					return this.platform.env.createHttpRequest(url, options);
+				}
+			});
+		},
+
+		createGithubStorage: function(){
+			/*
+			live example
+			var giturl = 'https://api.github.com/repos/dmail/argv/contents/index.js?ref=master';
+			var xhr = new XMLHttpRequest();
+			var date = new Date();
+			date.setMonth(0);
+
+			xhr.open('GET', giturl);
+			xhr.setRequestHeader('accept', 'application/vnd.github.v3.raw');
+			xhr.setRequestHeader('if-modified-since', date.toUTCString());
+			xhr.send(null);
+			*/
+			var githubStorage = this.createStorage('github', {
+				get: function(url, options){
+					var parsed = new URI(url);
+					var giturl = replace('https://api.github.com/repos/{user}/{repo}/contents/{path}?ref={version}', {
+						user: parsed.username,
+						repo: parsed.host,
+						path: parsed.pathname ? parsed.pathname.slice(1) : 'index.js',
+						version: parsed.hash ? parsed.hash.slice(1) : 'master'
+					});
+
+					options.method = 'GET';
+					options.headers = options.headers || {};
+					Object.assign(options.headers, {
+						'accept': 'application/vnd.github.v3.raw',
+						'User-Agent': 'jsenv' // https://developer.github.com/changes/2013-04-24-user-agent-required/
+					});
+
+					return this.platform.env.createModuleHttpRequest(giturl, options);
+				},
+
+				/*
+				// For POST, PATCH, PUT, and DELETE requests,
+				// parameters not included in the URL should be encoded as JSON with a Content-Type of ‘application/json’
+				// https://developer.github.com/v3/repos/contents/#create-a-file
+				set: function(url, options){
+					// il faut s'authentifier
+					// il faut faire une requête get pour savoir si le fichier existe
+					// s'il existe envoyer PUT + sha
+					// sinon POST
+					var giturl = replace('https://api.github.com/repos/{user}/{repo}/contents/{path}', {
+
+					});
+
+					options.method = 'POST';
+					options.headers = options.headers || {};
+					options.body = JSON.stringify({
+						message: 'update ' + parsed.pathname,
+						content: btoa(options.body) // or new Buffer(options.body).toString('base64')
+						//name: ''// the name of the author for this commit
+						//email: '' // email of the author for this commit
+					});
+
+					Object.assign(options.headers, {
+						'User-Agent': 'jsenv'
+					});
+				}
+				*/
+			});
+
+			return githubStorage;
+		},
+
+		setupStorages: function(){
+			this.httpRequestFactory = this.getHttpRequestFactory();
+			this.storages = this.getStorages();
+
+			// httpRequestFactory is equivalent to auto create the http, https & github storages
+			if( this.httpRequestFactory ){
+				this.storages.push(
+					this.createHttpStorage(),
+					this.createHttpsStorage(),
+					this.createGithubStorage()
+				);
+			}
+
+			debug('readable storages :', this.storages.reduce(function(previous, storage){
+				if( storage.get ) previous.push(storage.name);
+				return previous;
+			}, []));
+			debug('writable storages :', this.storages.reduce(function(previous, storage){
+				if( storage.set ) previous.push(storage.name);
+				return previous;
+			}, []));
 		},
 
 		toString: function(){
@@ -249,8 +359,12 @@ if( !Object.assign ){
 			return '';
 		},
 
+		getHttpRequestFactory: function(){
+			return null;
+		},
+
 		createStorage: function(name, options){
-			return new Storage(name, options);
+			return new Storage(this, name, options);
 		},
 
 		findStorage: function(name){
@@ -294,18 +408,6 @@ if( !Object.assign ){
 			}
 
 			return platform;
-		},
-
-		setupPlatform: function(){
-			this.platform = this.findPlatform();
-			if( this.platform == null ){
-				throw new Error('your javascript environment in not supported');
-			}
-			this.platform.setup();
-
-			this.global = this.platform.global;
-			this.global[this.globalName] = this;
-			this.baseURI = this.platform.baseURL;
 		}
 	});
 
@@ -314,16 +416,28 @@ if( !Object.assign ){
 			return typeof window !== 'undefined';
 		},
 
-		setup: function(){
-			this.env.need('/platforms/http-browser.js');
+		getSrc: function(){
+			return document.scripts[document.scripts.length - 1].src;
+		},
+
+		// browser must include script tag with the requirement
+		load: function(url, done){
+			var script = document.createElement('script');
+
+			script.src = url;
+			script.type = 'text/javascript';
+			script.onload = function(){
+				done();
+			};
+			script.onerror = function(error){
+				done(error);
+			};
+
+			document.head.appendChild(script);
 		},
 
 		getGlobal: function(){
 			return window;
-		},
-
-		getSrc: function(){
-			return document.scripts[document.scripts.length - 1].src;
 		},
 
 		getAgent: function(){
@@ -363,12 +477,10 @@ if( !Object.assign ){
 			return baseUrl;
 		},
 
-		getStorages: function(){
-			var self = this;
-
-			var fileStorage = this.createStorage('file', {
+		createFileStorage: function(){
+			return this.createStorage('file', {
 				get: function(url, options){
-					return self.findStorage('http').get(url, options).then(function(response){
+					return this.platform.findStorage('http').get(url, options).then(function(response){
 						// fix for browsers returning status == 0 for local file request
 						if( response.status === 0 ){
 							response.status = response.body ? 200 : 404;
@@ -377,41 +489,25 @@ if( !Object.assign ){
 					});
 				}
 			});
-
-			return [fileStorage];
 		},
 
-		// browser must include script tag with the requirement
-		loadScript: function(url, done){
-			var script = document.createElement('script');
-
-			script.src = url;
-			script.type = 'text/javascript';
-			script.onload = function(){
-				done();
-			};
-			script.onerror = function(error){
-				done(error);
-			};
-
-			document.head.appendChild(script);
+		getStorages: function(){
+			return [this.createFileStorage()];
 		},
 
 		init: function(){
-			var self = this;
-
 			function ready(){
 				var scripts = document.getElementsByTagName('script'), i = 0, j = scripts.length, script;
 				for(;i<j;i++){
 					script = scripts[i];
 					if( script.type === 'module' ){
-						self.env.module(script.innerHTML.slice(1)).catch(function(error){
+						jsenv.loader.module(script.innerHTML.slice(1)).catch(function(error){
 							setImmediate(function(){ throw error; });
 						});
 					}
 				}
 
-				self.env.init();
+				jsenv.init();
 			}
 
 			function completed(){
@@ -427,6 +523,58 @@ if( !Object.assign ){
 				document.addEventListener('DOMContentLoaded', completed);
 				window.addEventListener('load', completed);
 			}
+		},
+
+		getHttpRequestFactory: function(){
+			// https://gist.github.com/mmazer/5404301
+			function parseHeaders(headerString){
+				var headers = {}, pairs, pair, index, i, j, key, value;
+
+				if( headerString ){
+					pairs = headerString.split('\u000d\u000a');
+					i = 0;
+					j = pairs.length;
+					for(;i<j;i++){
+						pair = pairs[i];
+						index = pair.indexOf('\u003a\u0020');
+						if( index > 0 ){
+							key = pair.slice(0, index);
+							value = pair.slice(index + 2);
+							headers[key] = value;
+						}
+					}
+				}
+
+				return headers;
+			}
+
+
+			function createRequest(url, options){
+				return new Promise(function(resolve, reject){
+					var xhr = new XMLHttpRequest();
+
+					xhr.open(options.method, url);
+					if( options.headers ){
+						for(var key in options.headers){
+							xhr.setRequestHeader(key, options.headers[key]);
+						}
+					}
+
+					xhr.onerror = reject;
+					xhr.onreadystatechange = function(){
+						if( xhr.readyState === 4 ){
+							resolve({
+								status: xhr.status,
+								body: xhr.responseText,
+								headers: parseHeaders(xhr.getAllResponseHeaders())
+							});
+						}
+					};
+					xhr.send(options.body || null);
+				});
+			}
+
+			return createRequest;
 		}
 	});
 	jsenv.platforms.push(browserPlatform);
@@ -434,10 +582,6 @@ if( !Object.assign ){
 	var processPlatform = jsenv.createPlatform('process', {
 		is: function(){
 			return typeof process !== 'undefined';
-		},
-
-		setup: function(){
-			this.env.need('/platforms/http-process.js');
 		},
 
 		getSrc: function(){
@@ -448,6 +592,24 @@ if( !Object.assign ){
 			}
 
 			return src;
+		},
+
+		// in node env requires it
+		load: function(url, done){
+			var error = null;
+
+			if( url.indexOf('file://') === 0 ){
+				url = url.slice('file://'.length);
+			}
+
+			try{
+				require(url);
+			}
+			catch(e){
+				error = e;
+			}
+
+			done(error);
 		},
 
 		getName: function(){
@@ -478,7 +640,7 @@ if( !Object.assign ){
 			return baseUrl;
 		},
 
-		getStorages: function(){
+		createFileStorage: function(){
 			var filesystem = require('./utils/filesystem');
 
 			function readFile(file){
@@ -489,7 +651,7 @@ if( !Object.assign ){
 				return filesystem('writeFile', file, content);
 			}
 
-			var fileStorage = this.createStorage('file', {
+			return this.createStorage('file', {
 				get: function(url, options){
 					url = String(url).slice('file://'.length);
 
@@ -531,154 +693,68 @@ if( !Object.assign ){
 					});
 				}
 			});
-
-			return [fileStorage];
 		},
 
-		// in node env requires it
-		loadScript: function(url, done){
-			var error = null;
+		getStorages: function(){
+			return [this.createFileStorage()];
+		},
 
-			if( url.indexOf('file://') === 0 ){
-				url = url.slice('file://'.length);
+		getHttpRequestFactory: function(){
+			var http = require('http');
+			var https = require('https');
+			var parse = require('url').parse;
+
+			function createRequest(url, options){
+				var parsed = parse(url), secure;
+
+				Object.assign(options, parsed);
+
+				secure = options.protocol === 'https:';
+
+				options.port = secure ? 443 : 80;
+
+				return new Promise(function(resolve, reject){
+					var httpRequest = (secure ? https : http).request(options);
+
+					console.log(options.method, url);
+
+					function resolveWithHttpResponse(httpResponse){
+						var buffers = [], length;
+						httpResponse.addListener('data', function(chunk){
+							buffers.push(chunk);
+							length+= chunk.length;
+						});
+						httpResponse.addListener('end', function(){
+							resolve({
+								status: httpResponse.statusCode,
+								headers: httpResponse.headers,
+								body: Buffer.concat(buffers, length).toString()
+							});
+						});
+						httpResponse.addListener('error', reject);
+					}
+
+					httpRequest.addListener('response', resolveWithHttpResponse);
+					httpRequest.addListener('error', reject);
+					httpRequest.addListener('timeout', reject);
+					httpRequest.addListener('close', reject);
+
+					if( options.body ){
+						httpRequest.write(options.body);
+					}
+					else{
+						httpRequest.end();
+					}
+
+					// timeout
+					setTimeout(function(){ reject(new Error("Timeout")); }, 20000);
+				});
 			}
 
-			try{
-				require(url);
-			}
-			catch(e){
-				error = e;
-			}
-
-			done(error);
+			return createRequest;
 		}
-	});	
+	});
 	jsenv.platforms.push(processPlatform);
-
-	// storages
-	var Storage = create({
-		constructor: function(name, options){
-			this.name = name;
-			Object.assign(this, options);
-		}
-	});
-	Object.assign(jsenv, {
-		setupStorages: function(){
-			var httpRequestFactory = this.platform.httpRequestFactory;
-			function createHttpRequest(url, options){
-				if( options.mtime ){
-					options.headers = options.headers || {};
-					options.headers['if-modified-since'] = options.mtime;
-				}
-
-				return httpRequestFactory(url, options).then(function(response){
-					if( response.headers && 'last-modified' in response.headers ){
-						response.mtime = new Date(response.headers['last-modified']);
-					}
-					return response;
-				});
-			}
-
-			// httpRequestFactory is equivalent to auto create the http, https, github storages
-			if( httpRequestFactory ){
-				var httpStorage = this.platform.createStorage('http', {
-					get: function(url, options){
-						options.method = options.method || 'GET';
-						return createHttpRequest(url, options);
-					},
-
-					set: function(url, options){
-						options.method = options.method || 'POST';
-						return createHttpRequest(url, options);
-					}
-				});
-
-				var httpsStorage = this.platform.createStorage('https', {
-					get: function(url, options){
-						options.method = 'GET';
-						return createHttpRequest(url, options);
-					},
-
-					set: function(url, options){
-						options.method = options.method || 'POST';
-						return createHttpRequest(url, options);
-					}
-				});
-
-				/*
-				live example
-				var giturl = 'https://api.github.com/repos/dmail/argv/contents/index.js?ref=master';
-				var xhr = new XMLHttpRequest();
-				var date = new Date();
-				date.setMonth(0);
-
-				xhr.open('GET', giturl);
-				xhr.setRequestHeader('accept', 'application/vnd.github.v3.raw');
-				xhr.setRequestHeader('if-modified-since', date.toUTCString());
-				xhr.send(null);
-				*/
-				var githubStorage = this.platform.createStorage('github', {
-					get: function(url, options){
-						var parsed = new URI(url);
-						var giturl = replace('https://api.github.com/repos/{user}/{repo}/contents/{path}?ref={version}', {
-							user: parsed.username,
-							repo: parsed.host,
-							path: parsed.pathname ? parsed.pathname.slice(1) : 'index.js',
-							version: parsed.hash ? parsed.hash.slice(1) : 'master'
-						});
-
-						options.method = 'GET';
-						options.headers = options.headers || {};
-						Object.assign(options.headers, {
-							'accept': 'application/vnd.github.v3.raw',
-							'User-Agent': 'jsenv' // https://developer.github.com/changes/2013-04-24-user-agent-required/
-						});
-
-						return createHttpRequest(giturl, options);
-					},
-
-					/*
-					// For POST, PATCH, PUT, and DELETE requests,
-					// parameters not included in the URL should be encoded as JSON with a Content-Type of ‘application/json’
-					// https://developer.github.com/v3/repos/contents/#create-a-file
-					set: function(url, options){
-						// il faut s'authentifier
-						// il faut faire une requête get pour savoir si le fichier existe
-						// s'il existe envoyer PUT + sha
-						// sinon POST
-						var giturl = replace('https://api.github.com/repos/{user}/{repo}/contents/{path}', {
-
-						});
-
-						options.method = 'POST';
-						options.headers = options.headers || {};
-						options.body = JSON.stringify({
-							message: 'update ' + parsed.pathname,
-							content: btoa(options.body) // or new Buffer(options.body).toString('base64')
-							//name: ''// the name of the author for this commit
-							//email: '' // email of the author for this commit
-						});
-
-						Object.assign(options.headers, {
-							'User-Agent': 'jsenv'
-						});
-					}
-					*/
-				});
-
-				this.platform.storages.push(httpStorage, httpsStorage, githubStorage);
-			}
-
-			debug('readable storages :', this.platform.storages.reduce(function(previous, storage){
-				if( storage.get ) previous.push(storage.name);
-				return previous;
-			}, []));
-			debug('writable storages :', this.platform.storages.reduce(function(previous, storage){
-				if( storage.set ) previous.push(storage.name);
-				return previous;
-			}, []));
-		}
-	});
 
 	// configs
 	Object.assign(jsenv, {
@@ -760,22 +836,54 @@ if( !Object.assign ){
 			return meta;
 		},
 
-		createModuleNotFoundError: function(location){
-			var error = new Error('module not found ' + location);
-			error.code = 'MODULE_NOT_FOUND';
-			return error;
-		},
+		include: function(normalizedName, options){
+			normalizedName = String(normalizedName);
 
+			var module = this.loader.createModule(normalizedName);
+
+			// prevent locate()
+			if( options && options.address ){
+				module.address = options.address;
+			}
+
+			return module.then(function(){
+				module.parse();
+				module.execute();
+				return module;
+			});
+		}
+	});
+
+	Object.assign(jsenv, {
 		setup: function(){
-			this.baseURL = new URI(this.baseURL, this.baseURI);
-			this.platform.setup.call(this);
+			this.platform = this.findPlatform();
+			if( this.platform == null ){
+				throw new Error('your javascript environment in not supported');
+			}
+			this.platform.setup();
+
+			this.global = this.platform.global;
+			this.global[this.globalName] = this;
+			this.baseURI = this.platform.baseURL;
+
+			this.state = 'loading';
+			this.loadRequirements();
 		},
 
+		// called when all requirements are loaded
 		onload: function(){
+			this.state = 'loaded';
+			this.baseURL = new URI(this.baseURL, this.baseURI);
+			this.platform.setupStorages();
+			this.platform.init();
+		},
+
+		// called when jsenv is ready
+		init: function(){
 			if( this.mainModule ){
 				debug('including the mainModule', this.mainModule);
 
-				this.main = this.createModule(this.mainModule);
+				this.main = this.loader.createModule(this.mainModule);
 
 				this.main.then(function(){
 					this.main.parse();
@@ -789,703 +897,32 @@ if( !Object.assign ){
 		}
 	});
 
-	// object representing an attempt to locate/fetch/translate/parse a module
-	var Module = create({
-		mode: 'run', // 'install', 'update', 'run'
+	var polyfills = [
+		'URI',
+		'setImmediate', // because required by promise
+		'Symbol', // because required by iterator
+		'Iterator', // because required by promise.all
+		'Promise' // because it's amazing
+		//'System'
+	];
+	polyfills.forEach(function(polyfillName, index){
+		jsenv.need({
+			path: '/requirements/' + polyfillName + '.js',
 
-		loader: null, // loader used to load this module
-		status: null, // loading, loaded, failed
-		meta: null,
-		name: undefined, // the normalized module name, can be undefined for anonymous modules
+			has: function(){
+				return polyfillName in jsenv.global;
+			},
 
-		address: null, // result of locate()
-		body: null, // result of fetch()
-		source: null, // result of translate()
-		dependencies: null, // result of collectDependencies()
-		parsed: null, // result of parse()
-		value: undefined, // result of execute()
-
-		dependents: null, // set from dependencies
-
-		exception: null, // why fetch() failed
-		promise: null, // the promise representing the attempt to get the module
-
-		constructor: function(loader, normalizedName){
-			var module;
-
-			if( false === loader instanceof ES6Loader ){
-				throw new Error('loader expected when creating a module');
-			}
-
-			if( normalizedName && loader.has(normalizedName) ){
-				module = loader.get(normalizedName);
-			}
-			// create a load
-			else{
-				module = this;
-				module.loader = loader;
-				module.status = 'loading';
-				module.meta = {};
-				module.dependencies = [];
-				module.dependents = [];
-
-				if( normalizedName ){
-					module.name = normalizedName;
-					loader.modules[normalizedName] = module;
+			onResolve: function(){
+				if( !this.has() ){
+					throw new Error('loading the file ' + this.path + 'did not provide ' + polyfillName);
 				}
 			}
-
-			return module;
-		},
-
-		toString: function(){
-			return '[Module '+ this.name +']';
-		},
-
-		locate: function(){
-			this.step = 'locate';
-
-			debug('locate', this);
-
-			var promise;
-
-			if( this.hasOwnProperty('address') ){
-				promise = Promise.resolve(this.address);
-			}
-			else{
-				promise = Promise.resolve(this.loader.locate(this)).then(function(address){
-					this.address = address;
-					return address;
-				}.bind(this));
-			}
-
-			return promise;
-		},
-
-		fetch: function(){
-			this.step = 'fetch';
-
-			debug('fetch', this);
-
-			var promise;
-
-			if( this.hasOwnProperty('body') ){
-				promise = Promise.resolve(this.body);
-			}
-			else{
-				promise = this.loader.fetch(this).then(function(body){
-					this.body = body;
-					return body;
-				}.bind(this));
-			}
-
-			return promise;
-		},
-
-		translate: function(){
-			this.step = 'translate';
-
-			var promise;
-
-			if( this.hasOwnProperty('source') ){
-				promise = Promise.resolve(this.source);
-			}
-			else{
-				promise = Promise.resolve(this.loader.translate(this)).then(function(source){
-					this.source = source;
-					return source;
-				}.bind(this));
-			}
-
-			return promise.then(function(){
-				this.status = 'loaded';
-			}.bind(this));
-		},
-
-		declareDependency: function(name){
-			var normalizedName = this.loader.normalize(name, this.name, this.address);
-			var moduleDependency = this.loader.createModule(normalizedName);
-
-			if( moduleDependency === this ){
-				throw new Error(this + ' cannot depends on himself');
-			}
-			if( this.dependents.indexOf(moduleDependency) !== -1 ){
-				throw new Error(this + ' is dependant of ' + moduleDependency);
-			}
-
-			debug(this, 'depends on', moduleDependency);
-
-			if( this.dependencies.indexOf(moduleDependency) === -1 ){
-				this.dependencies.push(moduleDependency);
-			}
-			if( moduleDependency.dependents.indexOf(this) === -1 ){
-				moduleDependency.dependents.push(this);
-			}
-
-			return moduleDependency;
-		},
-
-		collectDependencies: function(){
-			var result = this.meta.dependencies || this.loader.collectDependencies(this);
-
-			if( result === undefined ){
-				throw new TypeError('native es6 modules instantiation not supported');
-			}
-			else if( Object(result) === result ){
-				if( result.length ){
-					debug(this, 'has the following dependencies in source', result.map(String));
-					result.forEach(this.declareDependency, this);
-				}
-				else{
-					debug(this, 'has no dependency');
-				}
-			}
-			else{
-				throw new TypeError('instantiate hook must return an object or undefined');
-			}
-		},
-
-		loadDependencies: function(){
-			// modules are thenable dependencies array is already an array of promise
-			var loadPromises = this.dependencies;
-			return Promise.all(this.dependencies);
-		},
-
-		parse: function(module){
-			var parsed;
-
-			if( this.hasOwnProperty('parsed') ){
-				parsed = this.parsed;
-			}
-			else{
-				parsed = this.loader.parse(this);
-				this.parsed = parsed;
-			}
-
-			return parsed;
-		},
-
-		execute: function(){
-			var value;
-
-			if( this.hasOwnProperty('value') ){
-				value = this.value;
-			}
-			else{
-				value = this.loader.execute(this);
-				this.value = value;
-				debug('executed', this, 'getting a value of type', typeof value);
-			}
-
-			return value;
-		},
-
-		include: function(name){
-			var normalizedName = this.loader.normalize(name, this.name, this.address), module;
-
-			module = this.loader.get(normalizedName);
-
-			if( module == null ){
-				throw new Error(this.name + ' includes ' + normalizedName + ', but the module cannot be found');
-			}
-
-			return module.value;
-		},
-
-		createPromise: function(){
-			var promise = Promise.resolve();
-
-			[
-				this.locate,
-				this.fetch,
-				this.translate,
-				this.collectDependencies,
-				this.loadDependencies
-			].forEach(function(method){
-				promise = promise.then(method.bind(this));
-			}, this);
-
-			promise = promise.catch(function(error){
-				this.status = 'failed';
-				this.exception = error;
-				return Promise.reject(error);
-			}.bind(this));
-
-			this.promise = promise;
-
-			return promise;
-		},
-
-		toPromise: function(){
-			var promise;
-
-			if( this.hasOwnProperty('promise') ){
-				promise = this.promise;
-			}
-			else{
-				promise = this.createPromise();
-			}
-
-			return promise;
-		},
-
-		then: function(onResolve, onReject){
-			return this.toPromise().then(onResolve, onReject);
-		}
+		});
 	});
-
-	var ES6Loader = create({
-		modules: null, // module registry
-
-		constructor: function(options){
-			if( options ){
-				Object.assign(this, options);
-			}
-
-			this.modules = {};
-		},
-
-		normalize: function(name, contextName, contextAddress){
-			return name;
-		},
-
-		locate: function(module){
-			return module.name;
-		},
-
-		fetch: function(module){
-			throw new TypeError('fetch not implemented');
-		},
-
-		translate: function(module){
-			return module.body;
-		},
-
-		collectDependencies: function(){
-
-		},
-
-		parse: function(module){
-			return module.source;
-		},
-
-		execute: function(module){
-			return undefined;
-		},
-
-		get: function(normalizedName){
-			var module;
-
-			if( this.has(normalizedName) ){
-				module = this.modules[normalizedName];
-
-				// ensure module is evaluated (parsed & executed
-				module.parse();
-				module.execute();
-			}
-
-			return module;
-		},
-
-		has: function(normalizedName){
-			return normalizedName in this.modules;
-		},
-
-		set: function(normalizedName, module){
-			if( false === module instanceof Module ){
-				throw new TypeError('Loader.set(' + normalizedName + ', module) must be a module');
-			}
-			this.modules[normalizedName] = module;
-		},
-
-		delete: function(normalizedName){
-			if( this.has(normalizedName) ){
-				delete this.modules[normalizedName];
-				return true;
-			}
-			return false;
-		},
-
-		entries: function(){ return new Iterator(this.modules, 'key+value'); },
-		keys: function(){ return new Iterator(this.modules, 'key'); },
-		values: function(){ return new Iterator(this.modules, 'value'); },
-
-		createModule: function(normalizedName){
-			return new Module(this, normalizedName);
-		},
-
-		define: function(normalizedName, source, options){
-			normalizedName = String(normalizedName);
-			// replace any existing module with the defined one
-			if( this.has(normalizedName) ){
-				this.delete(normalizedName);
-			}
-
-			var module = this.createModule(normalizedName);
-
-			module.address = normalizedName; // prevent locate()
-			module.source = source; // prevent fetch()
-
-			if( options ){
-				if( options.meta ){
-					module.meta = options.meta;
-				}
-				if( options.address ){
-					module.address = options.address;
-				}
-			}
-
-			return Promise.resolve(module).then(function(){});
-		},
-
-		load: function(normalizedName, options){
-			normalizedName = String(normalizedName);
-
-			var module = this.createModule(normalizedName);
-
-			// prevent locate()
-			if( options && options.address ){
-				module.address = options.address;
-			}
-
-			return Promise.resolve(module);
-		},
-
-		// execute a top level anonymous module, not registering it
-		module: function(body, options){
-			var module = this.createModule();
-
-			// prevent locate()
-			if( options && options.address ){
-				module.address = options.address;
-			}
-			else{
-				module.address = '';
-			}
-			// prevent fetch() but not translate
-			module.body = body;
-
-			console.log('body of anonymous module is', body);
-
-			return module.then(function(){
-				module.parse();
-				module.execute();
-				return module;
-			});
-		},
-
-		include: function(normalizedName, options){
-			normalizedName = String(normalizedName);
-
-			var module = this.createModule(normalizedName);
-
-			// prevent locate()
-			if( options && options.address ){
-				module.address = options.address;
-			}
-
-			return module.then(function(){
-				module.parse();
-				module.execute();
-				return module;
-			});
-		}
-	});
-
-	// overrides
-	Object.assign(jsenv, {
-		// https://github.com/systemjs/systemjs/blob/5ed14adca58abd3cf6c29783abd53af00b0c5bff/lib/package.js#L80
-		// for package, we have to know the main entry
-		normalize: function(name, contextName, contextAddress){
-			var absURLRegEx = /^([^\/]+:\/\/|\/)/;
-			var normalizedName;
-
-			function resolve(name, parentName){
-				// skip leading ./
- 				var parts = name.split('/');
-				var i = 0;
-				var dotdots = 0;
-				while( parts[i] == '.' ){
-					i++;
-					if( i == parts.length ){
-						throw new TypeError('Invalid module name');
-					}
-				}
-				// count dot dots
-				while( parts[i] == '..' ){
-					i++;
-					dotdots++;
-					if( i == parts.length ){
-					  throw new TypeError('Invalid module name');
-					}
-				}
-
-				var parentParts = parentName.split('/');
-
-				parts = parts.splice(i, parts.length - i);
-
-				// if backtracking below the parent name, just set to the base-level like URLs
-				// NB if parentAddress is supported in the spec, we can URL normalize against it here instead
-				if( dotdots > parentParts.length ){
-					throw new TypeError('Normalization of "' + name + '" to "' + parentName + '" back-tracks below the parent');
-				}
-				parts = parentParts.splice(0, parentParts.length - dotdots - 1).concat(parts);
-
-				return parts.join('/');
-			}
-
-			if( name[0] === '.' && contextName ){
-				if( contextName.match(absURLRegEx) ){
-					normalizedName = new URI(name, contextName);
-				}
-				else{
-					normalizedName = resolve(name, contextName);
-				}
-			}
-			else if( name[0] === '.' || name[0] === '/' ){
-				normalizedName = new URI(name, this.baseURL);
-			}
-			else{
-				normalizedName = name;
-			}
-
-			/*
-			if( !name.match(absURLRegEx) && name[0] != '.' ){
-    			normalizedName = new URI(name, this.baseURL);
-    		}
-    		else{
-    			normalizedName = new URI(name, contextAddress || this.baseURL);
-    		}
-    		*/
-
-			normalizedName = String(normalizedName);
-			debug('normalizing', name, contextName, String(contextAddress), 'to', normalizedName);
-
-			return normalizedName;
-		},
-
-		// https://github.com/systemjs/systemjs/blob/0.17/lib/core.js
-		locate: function(module){
-			var absURLRegEx = /^([^\/]+:\/\/|\/)/;
-			var name = module.name;
-			var address;
-			var meta = this.findMeta(name);
-
-			if( name.match(absURLRegEx) ){
-				address = new URI(name);
-			}
-			else{
-				address = new URI(meta.path, this.baseURL);
-			}
-
-			Object.assign(module.meta, meta);
-
-			var pathname = address.pathname;
-			var slashLastIndexOf = pathname.lastIndexOf('/');
-			var dirname, basename, extension;
-			var dotLastIndexOf;
-
-			if( slashLastIndexOf === -1 ){
-				dirname = '.';
-				basename = pathname;
-			}
-			else{
-				dirname = pathname.slice(0, slashLastIndexOf);
-				basename = pathname.slice(slashLastIndexOf + 1);
-			}
-
-			dotLastIndexOf = basename.lastIndexOf('.');
-			if( dotLastIndexOf === -1 ){
-				extension = '';
-			}
-			else{
-				extension = basename.slice(dotLastIndexOf);
-			}
-
-			if( extension != this.extension ){
-				extension = this.extension;
-				address.pathname+= this.extension;
-			}
-
-			module.dirname = dirname;
-			module.basename = basename;
-			module.extension = extension;
-
-			debug('localized', module.name, 'at', String(address));
-
-			return address;
-		},
-
-		fetch: function(module){
-			var location = module.address;
-			var href = String(location);
-
-			if( typeof href != 'string' ){
-				throw new TypeError('module url must a a string ' + href);
-			}
-
-			function findStorageFromURL(url){
-				url = new URI(url);
-				var name = url.protocol.slice(0, -1); // remove ':' from 'file:'
-				var storage = jsenv.platform.findStorage(name);
-				if( !storage ){
-					throw new Error('storage not found : ' + name);
-				}
-				return storage;
-			}
-
-			var toStorage = findStorageFromURL(href);
-			var from = module.meta.from;
-			if( !toStorage.get ){
-				throw new Error('unsupported read from ' + href);
-			}
-
-			var promise = toStorage.get(href, {});
-
-			// install mode react on 404 to project by read at from & write at to
-			if( module.mode === 'install' ){
-				promise = promise.then(function(response){
-					if( response.status != 404 ) return response;
-
-					if( !from ){
-						throw new Error('from not set for' + location);
-					}
-
-					debug(location + ' not found, trying to get it from', from);
-
-					if( !toStorage.set ){
-						throw new Error('unsupported write into ' + location);
-					}
-
-					var fromStorage = findStorageFromURL(from);
-					if( !fromStorage.get ){
-						throw new Error('unsupported read from ' + from);
-					}
-
-					return fromStorage.get(from, {}).then(function(response){
-						debug('from responded with', response.status);
-
-						if( response.status != 200 ) return response;
-						return toStorage.set(location, response.body, {}).then(function(){
-							return response;
-						});
-					});
-				});
-			}
-			// update mode react on 200 to project by read at from & write at to when from is more recent
-			else if( module.mode === 'update' ){
-				promise = promise.then(function(response){
-					if( response.status != 200 ) return response;
-					if( !from ) return response;
-
-					var fromStorage = findStorageFromURL(from);
-					var request = {
-						mtime:  module.meta.mtime
-					};
-
-					var fromPromise = fromStorage.get(from, request);
-
-					if( toStorage.set ){
-						fromPromise = fromPromise.then(function(response){
-							if( response.status != 200 ) return response; // only on 200 status
-							return toStorage.set(location, response.body, {}).then(function(){
-								return response;
-							});
-						});
-					}
-
-					return fromPromise;
-				});
-			}
-
-			promise = promise.then(function(response){
-				module.meta.response = response;
-				if( response.mtime ){
-					module.meta.mtime = response.mtime;
-				}
-
-				if( response.status === 404 ){
-					throw this.createModuleNotFoundError(location);
-				}
-				else if( response.status != 200 ){
-					if( response.status === 500 && response.body instanceof Error ){
-						throw response.body;
-					}
-					else{
-						throw new Error('fetch failed with response status: ' + response.status);
-					}
-				}
-
-				return response.body;
-			}.bind(this));
-
-			return promise;
-		},
-
-		collectDependencies: (function(){
-			// https://github.com/jonschlinkert/strip-comments/blob/master/index.js
-			var reLine = /(^|[^\S\n])(?:\/\/)([\s\S]+?)$/gm;
-			var reLineIgnore = /(^|[^\S\n])(?:\/\/[^!])([\s\S]+?)$/gm;
-			function stripLineComment(str, safe){
-				return String(str).replace(safe ? reLineIgnore : reLine, '');
-			}
-
-			var reBlock = /\/\*(?!\/)(.|[\r\n]|\n)+?\*\/\n?\n?/gm;
-			var reBlockIgnore = /\/\*(?!(\*?\/|\*?\!))(.|[\r\n]|\n)+?\*\/\n?\n?/gm;
-			function stripBlockComment(str, safe){
-				return String(str).replace(safe ? reBlockIgnore : reBlock, '');
-			}
-
-			var reDependency = /(?:^|;|\s+|ENV\.)include\(['"]([^'"]+)['"]\)/gm;
-			// for the moment remove regex for static ENV.include(), it's just an improvment but
-			// not required at all + it's strange for a dynamic ENV.include to be preloaded
-			reDependency = /(?:^|;|\s+)include\(['"]([^'"]+)['"]\)/gm;
-			function collectIncludeCalls(str){
-				str = stripLineComment(stripBlockComment(str));
-
-				var calls = [], match;
-				while(match = reDependency.exec(str) ){
-					calls.push(match[1]);
-				}
-				reDependency.lastIndex = 0;
-
-				return calls;
-			}
-
-			return function collectDependencies(module){
-				return collectIncludeCalls(module.source);
-			};
-		})(),
-
-		eval: function(code, url){
-			if( url ) code+= '\n//# sourceURL=' + url;
-			return eval(code);
-		},
-
-		parse: function(module){
-			return this.eval('(function(module, include){\n\n' + module.source + '\n\n})', module.address);
-		},
-
-		execute: function(module){
-			return module.parsed.call(this.global, module, module.include.bind(module));
-		}
-	});
-	jsenv = new ES6Loader(jsenv);
-
-	jsenv.setup = function(){
-		this.setupPlatform();
-		this.setupRequirements();
-	};
-
-	jsenv.oncomplete = function(){
-		this.setupStorages();
-		this.platform.init();
-	};
-
-	// noop, override at will
-	jsenv.init = function(){
-
-	};
+	jsenv.need('/requirements/global.env.js');
+	jsenv.need('./project.env.js');
+	jsenv.need('/requirements/loader.js');
 
 	jsenv.setup();
 })();
