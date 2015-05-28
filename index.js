@@ -832,12 +832,19 @@ if( !Object.assign ){
 				})(),
 
 				eval: function(code, url){
-					if( url ) code+= '\n//# sourceURL=' + url;
+					if( url ){
+						url = String(url);
+						if( url.indexOf('file:/') === 0 ){
+							url = url.slice('file:/'.length);
+						}
+						code+= '\n//# sourceURL=' + url;
+
+					}
 					return eval(code);
 				},
 
 				parse: function(module){
-					return this.eval('(function(module, include){\n\n' + module.source + '\n\n})', module.address);
+					return this.eval('(function(module, include){\n\n' + module.source + '\n\n});', module.address);
 				},
 
 				execute: function(module){
@@ -879,12 +886,14 @@ if( !Object.assign ){
 			if( this.mainModule ){
 				debug('including the mainModule', this.mainModule);
 
-				this.main = this.loader.createModule(this.mainModule);
+				var main = this.main = this.loader.createModule(
+					/*this.loader.normalize(*/this.mainModule//)
+				);
 
-				this.main.then(function(){
-					this.main.parse();
-					this.main.execute();
-				}.bind(this)).catch(function(error){
+				main.then(function(){
+					main.parse();
+					main.execute();
+				}).catch(function(error){
 					setImmediate(function(){
 						throw error;
 					});

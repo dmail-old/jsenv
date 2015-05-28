@@ -115,7 +115,7 @@
 		},
 
 		declareDependency: function(name){
-			var normalizedName = this.loader.normalize(name, this.name, this.address);
+			var normalizedName = this.loader.normalize(name, this.name, String(this.address));
 			var moduleDependency = this.loader.createModule(normalizedName);
 
 			if( moduleDependency === this ){
@@ -423,7 +423,7 @@
 
 	function resolvePath(name, parentName){
 		// skip leading ./
-			var parts = name.split('/');
+		var parts = name.split('/');
 		var i = 0;
 		var dotdots = 0;
 		while( parts[i] == '.' ){
@@ -548,12 +548,12 @@
 			var absURLRegEx = /^([^\/]+:\/\/|\/)/;
 			var firstChar = name[0], normalizedName;
 
-			if( firstChar === '.' && contextName ){
-				if( contextName.match(absURLRegEx) ){
-					normalizedName = new URI(name, contextName);
+			if( firstChar === '.' && contextAddress ){
+				if( contextAddress.match(absURLRegEx) ){
+					normalizedName = new URI(name, contextAddress);
 				}
 				else{
-					normalizedName = resolvePath(name, contextName);
+					normalizedName = resolvePath(name, contextAddress);
 				}
 			}
 			else if( firstChar === '.' || firstChar === '/' ){
@@ -564,15 +564,16 @@
 			}
 
 			normalizedName = String(normalizedName);
-			debug('normalizing', name, contextName, String(contextAddress), 'to', normalizedName);
+			debug('normalizing', name, contextAddress, String(contextAddress), 'to', normalizedName);
 
 			return normalizedName;
 		},
 
 		// https://github.com/systemjs/systemjs/blob/0.17/lib/core.js
 		locate: function(module){
-			var name = module.name, address, meta = this.findMeta(name), to, firstChar;
+			var name = module.name, address, meta, to, firstChar;
 
+			meta = this.findMeta(name);
 			Object.assign(module.meta, meta);
 			to = module.meta.to;
 			firstChar = to[0];
@@ -591,9 +592,10 @@
 			if( module.extname != this.extension ){
 				module.extname = this.extension;
 				address.pathname+= module.extname;
+				module.meta.to+= module.extname;
 			}
 
-			debug('localized', module.name, 'at', String(address));
+			debug('localized', name, 'at', String(address));
 
 			return address;
 		},
