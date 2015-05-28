@@ -60,6 +60,13 @@ function create(proto){
 	return proto.constructor;
 }
 
+function extend(constructor, proto){
+	var object = Object.create(constructor.prototype);
+	for(var key in proto ) object[key] = proto[key];
+	object.constructor.prototype = object;
+	return object.constructor;
+}
+
 function replace(string, values){
 	return string.replace((/\\?\{([^{}]+)\}/g), function(match, name){
 		if( match.charAt(0) == '\\' ) return match.slice(1);
@@ -231,12 +238,12 @@ if( !Object.assign ){
 			return this.createStorage('http', {
 				get: function(url, options){
 					options.method = options.method || 'GET';
-					return this.platform.env.createModuleHttpRequest(url, options);
+					return this.platform.createModuleHttpRequest(url, options);
 				},
 
 				set: function(url, options){
 					options.method = options.method || 'POST';
-					return this.platform.env.createModuleHttpRequest(url, options);
+					return this.platform.createModuleHttpRequest(url, options);
 				}
 			});
 		},
@@ -245,12 +252,12 @@ if( !Object.assign ){
 			return this.createStorage('https', {
 				get: function(url, options){
 					options.method = 'GET';
-					return this.platform.env.createHttpRequest(url, options);
+					return this.platform.createModuleHttpRequest(url, options);
 				},
 
 				set: function(url, options){
 					options.method = options.method || 'POST';
-					return this.platform.env.createHttpRequest(url, options);
+					return this.platform.createModuleHttpRequest(url, options);
 				}
 			});
 		},
@@ -285,7 +292,7 @@ if( !Object.assign ){
 						'User-Agent': 'jsenv' // https://developer.github.com/changes/2013-04-24-user-agent-required/
 					});
 
-					return this.platform.env.createModuleHttpRequest(giturl, options);
+					return this.platform.createModuleHttpRequest(giturl, options);
 				},
 
 				/*
@@ -385,7 +392,7 @@ if( !Object.assign ){
 	Object.assign(jsenv, {
 		platforms: [],
 		platform: null,
-		globalName: 'ENV',
+		globalName: 'jsenv',
 		global: null,
 		baseURI: null,
 		baseUrl: './', // relative to baseURI
@@ -758,83 +765,7 @@ if( !Object.assign ){
 
 	// configs
 	Object.assign(jsenv, {
-		extension: '.js',
-		configs: [],
 		mainModule: 'index',
-
-		getConfig: function(selector){
-			var configs = this.configs, i = 0, j = configs.length, config;
-
-			for(;i<j;i++){
-				config = configs[i];
-				if( config.selector === selector ) break;
-				else config = null;
-			}
-
-			return config;
-		},
-
-		config: function(selector, properties){
-			var config = this.getConfig(selector);
-
-			if( config ){
-				Object.assign(config.properties, properties);
-			}
-			else{
-				this.configs.push({
-					selector: selector,
-					properties: properties
-				});
-				// keep config sorted (the most specific config is the last applied)
-				this.configs = this.configs.sort(function(a, b){
-					return (a.path ? a.path.length : 0) - (b.path ? b.path.length : 0);
-				});
-			}
-		},
-
-		matchSelector: function(name, selector){
-			var starIndex = selector.indexOf('*'), match = false;
-
-			if( starIndex === -1 ){
-				if( name === selector ){
-					match =  true;
-				}
-			}
-			else{
-				var left = selector.slice(0, starIndex), right = selector.slice(starIndex + 1);
-				var nameLeft = name.slice(0, left.length), nameRight = name.slice(name.length - right.length);
-
-				if( left == nameLeft && right == nameRight ){
-					match = name.slice(left.length, name.length - right.length);
-				}
-			}
-
-			return match;
-		},
-
-		findMeta: function(normalizedName){
-			var meta = {path: normalizedName}, match;
-
-			this.configs.forEach(function(config){
-				match = this.matchSelector(normalizedName, config.selector);
-				if( match ){
-					Object.assign(meta, config.properties);
-
-					if( typeof match === 'string' ){
-						for(var key in meta){
-							meta[key] = meta[key].replace('*', match);
-						}
-					}
-				}
-			}, this);
-
-			// for wildcard match, add main only if the normalizedName does not contains '/' after the match
-			if( meta.main && (!match || typeof match != 'string' || match.indexOf('/') === -1) ){
-				meta.path+= '/' + meta.main;
-			}
-
-			return meta;
-		},
 
 		include: function(normalizedName, options){
 			normalizedName = String(normalizedName);
@@ -851,6 +782,72 @@ if( !Object.assign ){
 				module.execute();
 				return module;
 			});
+		}
+	});
+
+	// loader
+	Object.assign(jsenv, {
+		createLoader: function(options){
+			return new this.Loader(this, options);
+		},
+
+		createJSLoader: function(){
+			return this.createLoader({
+				extension: '.js',
+				baseURL: new URI(this.baseURL, this.baseURI),
+
+				collectDependencies: (function(){
+					// https://github.com/jonschlinkert/strip-comments/blob/master/index.js
+					var reLine = /(^|[^\S\n])(?:\/\/)([\s\S]+?)$/gm;
+					var reLineIgnore = /(^|[^\S\n])(?:\/\/[^!])([\s\S]+?)$/gm;
+					function stripLineComment(str, safe){
+						return String(str).replace(safe ? reLineIgnore : reLine, '');
+					}
+
+					var reBlock = /\/\*(?!\/)(.|[\r\n]|\n)+?\*\/\n?\n?/gm;
+					var reBlockIgnore = /\/\*(?!(\*?\/|\*?\!))(.|[\r\n]|\n)+?\*\/\n?\n?/gm;
+					function stripBlockComment(str, safe){
+						return String(str).replace(safe ? reBlockIgnore : reBlock, '');
+					}
+
+					var reDependency = /(?:^|;|\s+|ENV\.)include\(['"]([^'"]+)['"]\)/gm;
+					// for the moment remove regex for static ENV.include(), it's just an improvment but
+					// not required at all + it's strange for a dynamic ENV.include to be preloaded
+					reDependency = /(?:^|;|\s+)include\(['"]([^'"]+)['"]\)/gm;
+					function collectIncludeCalls(str){
+						str = stripLineComment(stripBlockComment(str));
+
+						var calls = [], match;
+						while(match = reDependency.exec(str) ){
+							calls.push(match[1]);
+						}
+						reDependency.lastIndex = 0;
+
+						return calls;
+					}
+
+					return function collectDependencies(module){
+						return collectIncludeCalls(module.source);
+					};
+				})(),
+
+				eval: function(code, url){
+					if( url ) code+= '\n//# sourceURL=' + url;
+					return eval(code);
+				},
+
+				parse: function(module){
+					return this.eval('(function(module, include){\n\n' + module.source + '\n\n})', module.address);
+				},
+
+				execute: function(module){
+					return module.parsed.call(this.global, module, module.include.bind(module));
+				}
+			});
+		},
+
+		setupLoader: function(){
+			this.loader = this.createJSLoader();
 		}
 	});
 
@@ -873,7 +870,6 @@ if( !Object.assign ){
 		// called when all requirements are loaded
 		onload: function(){
 			this.state = 'loaded';
-			this.baseURL = new URI(this.baseURL, this.baseURI);
 			this.platform.setupStorages();
 			this.platform.init();
 		},
@@ -920,9 +916,15 @@ if( !Object.assign ){
 			}
 		});
 	});
+	jsenv.need({
+		path: '/requirements/loader.js',
+
+		onResolve: function(){
+			jsenv.setupLoader();
+		}
+	});
 	jsenv.need('/requirements/global.env.js');
 	jsenv.need('./project.env.js');
-	jsenv.need('/requirements/loader.js');
 
 	jsenv.setup();
 })();

@@ -1,5 +1,7 @@
+/* globals create, extend */
+
 (function(global){
-	var Iterator = {
+	var Iterator = create({
 		constructor: function(object, keyOnly){
 			if( arguments.length === 0 ){
 				throw new TypeError('missing argument 0 when calling function Iterator');
@@ -58,13 +60,13 @@
 		toString: function(){
 			return '[object Object]';
 		}
-	};
-	Iterator[Symbol.Iterator] = function(){
+	});
+	Iterator.prototype[Symbol.Iterator] = function(){
 		return this;
 	};
 
 	// see http://people.mozilla.org/~jorendorff/es6-draft.html#sec-array-iterator-objects
-	var ArrayIterator = {
+	var ArrayIterator = extend(Iterator, {
 		constructor: function(array, kind){
 			if( !(array instanceof Array) ){
 				throw new TypeError('array expected');
@@ -100,10 +102,10 @@
 		toString: function(){
 			return '[object Array Iterator]';
 		}
-	};
+	});
 
 	// see http://people.mozilla.org/~jorendorff/es6-draft.html#sec-%stringiteratorprototype%.next
-	var StringIterator = {
+	var StringIterator = extend(Iterator, {
 		iteratedString: null,
 		nextIndex: null,
 		result: null,
@@ -146,24 +148,7 @@
 		toString: function(){
 			return '[object StringIterator]';
 		}
-	};
-
-	Iterator.constructor.prototype = Iterator;
-	Iterator = Iterator.constructor;
-	ArrayIterator.constructor.prototype = extend(Iterator, ArrayIterator);
-	ArrayIterator = ArrayIterator.constructor;
-	polyfill(Array, ArrayIterator);
-	StringIterator.constructor.prototype = extend(Iterator, StringIterator);
-	StringIterator = StringIterator.constructor;
-	polyfill(String, StringIterator);
-
-	if( !global.Iterator ) global.Iterator = Iterator;
-
-	function extend(constructor, proto){
-		var object = Object.create(constructor.prototype);
-		for(var key in proto ) object[key] = proto[key];
-		return object;
-	}
+	});
 
 	function polyfill(constructor, iterator){
 		if( !(Symbol.iterator in constructor.prototype) ){
@@ -177,4 +162,8 @@
 		}
 	}
 
-})(ENV.global);
+	polyfill(Array, ArrayIterator);
+	polyfill(String, StringIterator);
+	if( !global.Iterator ) global.Iterator = Iterator;
+
+})(jsenv.global);

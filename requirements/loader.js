@@ -1,4 +1,4 @@
-/* globals create, debug */
+/* globals create, debug, extend */
 
 (function(jsenv){
 	// object representing an attempt to locate/fetch/translate/parse a module
@@ -393,70 +393,175 @@
 		}
 	});
 
-	var loader = new ES6Loader({
-		// https://github.com/systemjs/systemjs/blob/5ed14adca58abd3cf6c29783abd53af00b0c5bff/lib/package.js#L80
-		// for package, we have to know the main entry
-		normalize: function(name, contextName, contextAddress){
-			var absURLRegEx = /^([^\/]+:\/\/|\/)/;
-			var normalizedName;
+	function definePathnameParts(module, address){
+		var pathname = address.pathname;
+		var slashLastIndexOf = pathname.lastIndexOf('/');
+		var dirname, basename, extname;
+		var dotLastIndexOf;
 
-			function resolve(name, parentName){
-				// skip leading ./
- 				var parts = name.split('/');
-				var i = 0;
-				var dotdots = 0;
-				while( parts[i] == '.' ){
-					i++;
-					if( i == parts.length ){
-						throw new TypeError('Invalid module name');
-					}
-				}
-				// count dot dots
-				while( parts[i] == '..' ){
-					i++;
-					dotdots++;
-					if( i == parts.length ){
-					  throw new TypeError('Invalid module name');
-					}
-				}
+		if( slashLastIndexOf === -1 ){
+			dirname = '.';
+			basename = pathname;
+		}
+		else{
+			dirname = pathname.slice(0, slashLastIndexOf);
+			basename = pathname.slice(slashLastIndexOf + 1);
+		}
 
-				var parentParts = parentName.split('/');
+		dotLastIndexOf = basename.lastIndexOf('.');
+		if( dotLastIndexOf === -1 ){
+			extname = '';
+		}
+		else{
+			extname = basename.slice(dotLastIndexOf);
+		}
 
-				parts = parts.splice(i, parts.length - i);
+		module.dirname = dirname;
+		module.basename = basename;
+		module.extname = extname;
+	}
 
-				// if backtracking below the parent name, just set to the base-level like URLs
-				// NB if parentAddress is supported in the spec, we can URL normalize against it here instead
-				if( dotdots > parentParts.length ){
-					throw new TypeError('Normalization of "' + name + '" to "' + parentName + '" back-tracks below the parent');
-				}
-				parts = parentParts.splice(0, parentParts.length - dotdots - 1).concat(parts);
+	function resolvePath(name, parentName){
+		// skip leading ./
+			var parts = name.split('/');
+		var i = 0;
+		var dotdots = 0;
+		while( parts[i] == '.' ){
+			i++;
+			if( i == parts.length ){
+				throw new TypeError('Invalid module name');
+			}
+		}
+		// count dot dots
+		while( parts[i] == '..' ){
+			i++;
+			dotdots++;
+			if( i == parts.length ){
+			  throw new TypeError('Invalid module name');
+			}
+		}
 
-				return parts.join('/');
+		var parentParts = parentName.split('/');
+
+		parts = parts.splice(i, parts.length - i);
+
+		// if backtracking below the parent name, just set to the base-level like URLs
+		// NB if parentAddress is supported in the spec, we can URL normalize against it here instead
+		if( dotdots > parentParts.length ){
+			throw new TypeError('Normalization of "' + name + '" to "' + parentName + '" back-tracks below the parent');
+		}
+		parts = parentParts.splice(0, parentParts.length - dotdots - 1).concat(parts);
+
+		return parts.join('/');
+	}
+
+	var jsenvLoader = extend(ES6Loader, {
+		constructor: function(env, options){
+			ES6Loader.call(this, options);
+			this.env = env;
+			this.rules = [];
+		},
+
+		getRule: function(selector){
+			var rules = this.rules, i = 0, j = rules.length, rule;
+
+			for(;i<j;i++){
+				rule = rules[i];
+				if( rule.selector === selector ) break;
+				else rule = null;
 			}
 
-			if( name[0] === '.' && contextName ){
+			return rule;
+		},
+
+		rule: function(selector, properties){
+			var rule = this.getRule(selector);
+
+			if( rule ){
+				Object.assign(rule.properties, properties);
+			}
+			else{
+				this.rules.push({
+					selector: selector,
+					properties: properties
+				});
+				// keep rules sorted (the most specific rule is the last applied)
+				this.rules = this.rules.sort(function(a, b){
+					return (a.path ? a.path.length : 0) - (b.path ? b.path.length : 0);
+				});
+			}
+		},
+
+		matchSelector: function(name, selector){
+			var starIndex = selector.indexOf('*'), match = false;
+
+			if( starIndex === -1 ){
+				if( name === selector ){
+					match =  true;
+				}
+			}
+			else{
+				var left = selector.slice(0, starIndex), right = selector.slice(starIndex + 1);
+				var nameLeft = name.slice(0, left.length), nameRight = name.slice(name.length - right.length);
+
+				if( left == nameLeft && right == nameRight ){
+					match = name.slice(left.length, name.length - right.length);
+				}
+			}
+
+			return match;
+		},
+
+		findMeta: function(normalizedName){
+			var meta = {to: normalizedName}, match;
+
+			this.rules.forEach(function(rule){
+				match = this.matchSelector(normalizedName, rule.selector);
+				if( match ){
+					Object.assign(meta, rule.properties);
+
+					/*
+					if( typeof match === 'string' ){
+						for(var key in meta){
+							meta[key] = meta[key].replace('*', match);
+						}
+					}
+					*/
+				}
+			}, this);
+
+			return meta;
+		},
+
+		findStorage: function(url){
+			url = new URI(url);
+			var name = url.protocol.slice(0, -1); // remove ':' from 'file:'
+			var storage = this.env.platform.findStorage(name);
+			if( !storage ){
+				throw new Error('storage not found : ' + url);
+			}
+			return storage;
+		},
+
+		// https://github.com/systemjs/systemjs/blob/5ed14adca58abd3cf6c29783abd53af00b0c5bff/lib/package.js#L80
+		normalize: function(name, contextName, contextAddress){
+			var absURLRegEx = /^([^\/]+:\/\/|\/)/;
+			var firstChar = name[0], normalizedName;
+
+			if( firstChar === '.' && contextName ){
 				if( contextName.match(absURLRegEx) ){
 					normalizedName = new URI(name, contextName);
 				}
 				else{
-					normalizedName = resolve(name, contextName);
+					normalizedName = resolvePath(name, contextName);
 				}
 			}
-			else if( name[0] === '.' || name[0] === '/' ){
+			else if( firstChar === '.' || firstChar === '/' ){
 				normalizedName = new URI(name, this.baseURL);
 			}
 			else{
 				normalizedName = name;
 			}
-
-			/*
-			if( !name.match(absURLRegEx) && name[0] != '.' ){
-    			normalizedName = new URI(name, this.baseURL);
-    		}
-    		else{
-    			normalizedName = new URI(name, contextAddress || this.baseURL);
-    		}
-    		*/
 
 			normalizedName = String(normalizedName);
 			debug('normalizing', name, contextName, String(contextAddress), 'to', normalizedName);
@@ -466,50 +571,27 @@
 
 		// https://github.com/systemjs/systemjs/blob/0.17/lib/core.js
 		locate: function(module){
-			var absURLRegEx = /^([^\/]+:\/\/|\/)/;
-			var name = module.name;
-			var address;
-			var meta = this.findMeta(name);
-
-			if( name.match(absURLRegEx) ){
-				address = new URI(name);
-			}
-			else{
-				address = new URI(meta.path, this.baseURL);
-			}
+			var name = module.name, address, meta = this.findMeta(name), to, firstChar;
 
 			Object.assign(module.meta, meta);
+			to = module.meta.to;
+			firstChar = to[0];
 
-			var pathname = address.pathname;
-			var slashLastIndexOf = pathname.lastIndexOf('/');
-			var dirname, basename, extension;
-			var dotLastIndexOf;
-
-			if( slashLastIndexOf === -1 ){
-				dirname = '.';
-				basename = pathname;
+			// relative names
+			if( firstChar === '/' || firstChar === '.' ){
+				address = new URI(to, this.baseURL);
 			}
+			// absolute names
 			else{
-				dirname = pathname.slice(0, slashLastIndexOf);
-				basename = pathname.slice(slashLastIndexOf + 1);
+				address = new URI(to);
 			}
 
-			dotLastIndexOf = basename.lastIndexOf('.');
-			if( dotLastIndexOf === -1 ){
-				extension = '';
-			}
-			else{
-				extension = basename.slice(dotLastIndexOf);
-			}
+			definePathnameParts(module, address);
 
-			if( extension != this.extension ){
-				extension = this.extension;
-				address.pathname+= this.extension;
+			if( module.extname != this.extension ){
+				module.extname = this.extension;
+				address.pathname+= module.extname;
 			}
-
-			module.dirname = dirname;
-			module.basename = basename;
-			module.extension = extension;
 
 			debug('localized', module.name, 'at', String(address));
 
@@ -517,68 +599,55 @@
 		},
 
 		fetch: function(module){
-			var location = module.address;
-			var href = String(location);
-
-			if( typeof href != 'string' ){
-				throw new TypeError('module url must a a string ' + href);
+			var to = String(new URI(module.meta.to, this.baseURL));
+			if( typeof to != 'string' ){
+				throw new TypeError('module.meta.to must be a string');
 			}
 
-			function findStorageFromURL(url){
-				url = new URI(url);
-				var name = url.protocol.slice(0, -1); // remove ':' from 'file:'
-				var storage = jsenv.platform.findStorage(name);
-				if( !storage ){
-					throw new Error('storage not found : ' + name);
-				}
-				return storage;
-			}
-
-			var toStorage = findStorageFromURL(href);
-			var from = module.meta.from;
+			var toStorage = this.findStorage(to);
 			if( !toStorage.get ){
-				throw new Error('unsupported read from ' + href);
+				throw new Error('unsupported read at ' + to);
 			}
 
-			var promise = toStorage.get(href, {});
+			var promise = toStorage.get(to, {});
 
 			// install mode react on 404 to project by read at from & write at to
 			if( module.mode === 'install' ){
 				promise = promise.then(function(response){
 					if( response.status != 404 ) return response;
 
+					var from = module.meta.from;
 					if( !from ){
-						throw new Error('from not set for' + location);
+						throw new Error('cannot install: ' + to + ' has no from location');
 					}
-
-					debug(location + ' not found, trying to get it from', from);
-
 					if( !toStorage.set ){
-						throw new Error('unsupported write into ' + location);
+						throw new Error('cannot install: unsupported write at ' + to);
 					}
-
-					var fromStorage = findStorageFromURL(from);
+					var fromStorage = this.findStorage(from);
 					if( !fromStorage.get ){
-						throw new Error('unsupported read from ' + from);
+						throw new Error('cannot install: unsupported read at ' + from);
 					}
 
+					debug(to, 'not found, trying to get it at', from);
 					return fromStorage.get(from, {}).then(function(response){
 						debug('from responded with', response.status);
 
 						if( response.status != 200 ) return response;
-						return toStorage.set(location, response.body, {}).then(function(){
+						return toStorage.set(to, response.body, {}).then(function(){
 							return response;
 						});
 					});
-				});
+				}.bind(this));
 			}
 			// update mode react on 200 to project by read at from & write at to when from is more recent
 			else if( module.mode === 'update' ){
 				promise = promise.then(function(response){
 					if( response.status != 200 ) return response;
+
+					var from = module.meta.from;
 					if( !from ) return response;
 
-					var fromStorage = findStorageFromURL(from);
+					var fromStorage = this.findStorage(from);
 					var request = {
 						mtime:  module.meta.mtime
 					};
@@ -588,14 +657,14 @@
 					if( toStorage.set ){
 						fromPromise = fromPromise.then(function(response){
 							if( response.status != 200 ) return response; // only on 200 status
-							return toStorage.set(location, response.body, {}).then(function(){
+							return toStorage.set(to, response.body, {}).then(function(){
 								return response;
 							});
 						});
 					}
 
 					return fromPromise;
-				});
+				}.bind(this));
 			}
 
 			promise = promise.then(function(response){
@@ -605,7 +674,7 @@
 				}
 
 				if( response.status === 404 ){
-					throw this.createModuleNotFoundError(location);
+					throw this.createModuleNotFoundError(to);
 				}
 				else if( response.status != 200 ){
 					if( response.status === 500 && response.body instanceof Error ){
@@ -620,57 +689,9 @@
 			}.bind(this));
 
 			return promise;
-		},
-
-		collectDependencies: (function(){
-			// https://github.com/jonschlinkert/strip-comments/blob/master/index.js
-			var reLine = /(^|[^\S\n])(?:\/\/)([\s\S]+?)$/gm;
-			var reLineIgnore = /(^|[^\S\n])(?:\/\/[^!])([\s\S]+?)$/gm;
-			function stripLineComment(str, safe){
-				return String(str).replace(safe ? reLineIgnore : reLine, '');
-			}
-
-			var reBlock = /\/\*(?!\/)(.|[\r\n]|\n)+?\*\/\n?\n?/gm;
-			var reBlockIgnore = /\/\*(?!(\*?\/|\*?\!))(.|[\r\n]|\n)+?\*\/\n?\n?/gm;
-			function stripBlockComment(str, safe){
-				return String(str).replace(safe ? reBlockIgnore : reBlock, '');
-			}
-
-			var reDependency = /(?:^|;|\s+|ENV\.)include\(['"]([^'"]+)['"]\)/gm;
-			// for the moment remove regex for static ENV.include(), it's just an improvment but
-			// not required at all + it's strange for a dynamic ENV.include to be preloaded
-			reDependency = /(?:^|;|\s+)include\(['"]([^'"]+)['"]\)/gm;
-			function collectIncludeCalls(str){
-				str = stripLineComment(stripBlockComment(str));
-
-				var calls = [], match;
-				while(match = reDependency.exec(str) ){
-					calls.push(match[1]);
-				}
-				reDependency.lastIndex = 0;
-
-				return calls;
-			}
-
-			return function collectDependencies(module){
-				return collectIncludeCalls(module.source);
-			};
-		})(),
-
-		eval: function(code, url){
-			if( url ) code+= '\n//# sourceURL=' + url;
-			return eval(code);
-		},
-
-		parse: function(module){
-			return this.eval('(function(module, include){\n\n' + module.source + '\n\n})', module.address);
-		},
-
-		execute: function(module){
-			return module.parsed.call(this.global, module, module.include.bind(module));
 		}
 	});
 
-	jsenv.loader = loader;
+	jsenv.Loader = jsenvLoader;
 
-})(ENV);
+})(jsenv);

@@ -37,7 +37,7 @@ But The main goal is to have String(Symbol.iterator) returning a string in non e
 		toString: function(){
 			return this.name;
 		},
-		
+
 		toSource: function(){
 			return 'Symbol("' + this.key + '")';
 		},
@@ -57,7 +57,7 @@ But The main goal is to have String(Symbol.iterator) returning a string in non e
 	};
 	Symbol.constructor.prototype = Symbol;
 	Symbol = Symbol.constructor;
-	
+
 	[
 		'hasInstance',
 		'isConcatSpreadable',
@@ -73,14 +73,14 @@ But The main goal is to have String(Symbol.iterator) returning a string in non e
 	].forEach(function(key){
 		Symbol[key] = Symbol(key);
 	});
-	
+
 	HiddenSymbol.prototype[Symbol.toPrimitive] = function(){
 		return this;
 	};
 	HiddenSymbol.prototype[Symbol.toStringTag] = function(){
 		return 'Symbol';
 	};
-	
+
 	Symbol.symbols = {};
 	Symbol.for = function(key){
 		var symbol, symbols = this.symbols;
@@ -95,7 +95,7 @@ But The main goal is to have String(Symbol.iterator) returning a string in non e
 
 		return symbol;
 	};
-	
+
 	Symbol.is = function(item){
 		return item && (typeof item === 'symbol' || item[Symbol.toStringTag] === 'Symbol');
 	};
@@ -118,12 +118,12 @@ But The main goal is to have String(Symbol.iterator) returning a string in non e
 				}
 			}
 		}
-		
+
 		return key;
 	};
 
 	if( !global.Symbol ) global.Symbol = Symbol;
 
-})(ENV.global);
+})(jsenv.global);
 
 

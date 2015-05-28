@@ -134,4 +134,4 @@
 
 	global.URI = URI;
 
-})(ENV.global);
+})(jsenv.global);

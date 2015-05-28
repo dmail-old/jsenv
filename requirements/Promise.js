@@ -121,14 +121,14 @@
 				this.unhandled = global.setImmediate(function(){
 					this.unhandled = null;
 					if( !this.handled ){ // then() still never called
-						if( ENV.platform.name === 'server' ){
+						if( jsenv.platform.type === 'process' ){
 							if( process.listeners('unhandledRejection').length === 0 ){
 								var mess = value instanceof Error ? value.stack : value;
 								console.log('possibly unhandled rejection "' + mess + '" for promise', this);
 							}
 							process.emit('unhandledRejection', value, this);
 						}
-						else if( ENV.platform.name === 'browser' ){
+						else if( jsenv.platform.type === 'browser' ){
 							if( !window.onrejectionhandled ){
 								var mess = value instanceof Error ? value.stack : value;
 								console.log('possibly unhandled rejection "' + value + '" for promise', this);
@@ -273,4 +273,4 @@
 		global.Promise = Promise;
 	}
 
-})(ENV.global);
+})(jsenv.global);
