@@ -782,6 +782,141 @@ if( !Object.assign ){
 				module.execute();
 				return module;
 			});
+		},
+
+		sourceLinks: [],
+		originLinks: [],
+
+		link: function(from, to, main, fromType){
+			var list = this[fromType === 'source' ? 'sourceLinks' : 'originLinks'];
+
+			list.push({
+				from: from,
+				to: to,
+				type: main ? 'directory' : 'file'
+			});
+
+			if( main ){
+				list.push({
+					from: to,
+					to: to + '/' + main,
+					type: 'file'
+				});
+			}
+		},
+
+		linkSource: function(from, to, main){
+			return this.link(from, to, main, 'source');
+		},
+
+		linkOrigin: function(from, to, main){
+			return this.link(from, to, main, 'origin');
+		},
+
+		isInside: function(path, potentialParent){
+			function stripLastSep(path){
+				if( path[path.length - 1] === '/' ){
+					path = path.slice(0, -1);
+				}
+				return path;
+			}
+
+			path = stripLastSep(path);
+			potentialParent = stripLastSep(potentialParent);
+
+			// they are the same
+			if( path === potentialParent ) return true;
+			// 'folder2' not inside 'folder'
+			if( path[potentialParent.length] != '/' ) return false;
+			// 'folder/file.js' starts with 'folder'
+			return path.indexOf(potentialParent) === 0;
+		},
+
+		follow: function(from, fromType){
+			if( fromType === 'origin' ) from = this.follow(from, 'source');
+
+			var current = from, to = from;
+
+			this[fromType === 'source' ? 'sourceLinks' : 'originLinks'].forEach(function(link){
+				//debug('is there a link for', current, this.isInside(current, link.from));
+
+				if( link.type === 'file' ){
+					if( current === link.from ){
+						to = link.to;
+						debug('follow', fromType, 'link from', current, 'to', to);
+						current = to;
+					}
+				}
+				else if( link.type === 'directory' ){
+					if( this.isInside(current, link.from) ){
+						to = link.to + current.slice(link.from.length);
+						debug('follow', fromType, 'link from', current, 'to', to);
+						current = to;
+					}
+				}
+			}, this);
+
+			return to;
+		},
+
+		rules: [],
+
+		getRule: function(selector){
+			var rules = this.rules, i = 0, j = rules.length, rule;
+
+			for(;i<j;i++){
+				rule = rules[i];
+				if( rule.selector === selector ) break;
+				else rule = null;
+			}
+
+			return rule;
+		},
+
+		rule: function(selector, properties){
+			var rule = this.getRule(selector);
+
+			if( rule ){
+				Object.assign(rule.properties, properties);
+			}
+			else{
+				this.rules.push({
+					selector: selector,
+					properties: properties
+				});
+				// keep rules sorted (the most specific rule is the last applied)
+				this.rules = this.rules.sort(function(a, b){
+					return (a.selector ? a.selector.length : 0) - (b.selector ? b.selector.length : 0);
+				});
+			}
+		},
+
+		matchSelector: function(name, selector){
+			return name === selector;
+		},
+
+		findMeta: function(normalizedName){
+			var source, meta, match, selector, properties, origin;
+
+			source = normalizedName;
+			source = this.follow(source, 'source');
+			origin = this.follow(source, 'origin');
+
+			meta = {
+				source: source,
+				origin: origin
+			};
+
+			this.rules.forEach(function(rule){
+				selector = rule.selector;
+				match = this.matchSelector(source, selector);
+				if( match ){
+					properties = rule.properties;
+					Object.assign(meta, properties);
+				}
+			}, this);
+
+			return meta;
 		}
 	});
 
@@ -877,6 +1012,7 @@ if( !Object.assign ){
 		// called when all requirements are loaded
 		onload: function(){
 			this.state = 'loaded';
+			this.setupLoader();
 			this.platform.setupStorages();
 			this.platform.init();
 		},
@@ -925,13 +1061,7 @@ if( !Object.assign ){
 			}
 		});
 	});
-	jsenv.need({
-		path: '/requirements/loader.js',
-
-		onResolve: function(){
-			jsenv.setupLoader();
-		}
-	});
+	jsenv.need('/requirements/loader.js');
 	jsenv.need('/requirements/global.env.js');
 	jsenv.need('./project.env.js');
 

@@ -459,78 +459,6 @@
 		constructor: function(env, options){
 			ES6Loader.call(this, options);
 			this.env = env;
-			this.rules = [];
-		},
-
-		getRule: function(selector){
-			var rules = this.rules, i = 0, j = rules.length, rule;
-
-			for(;i<j;i++){
-				rule = rules[i];
-				if( rule.selector === selector ) break;
-				else rule = null;
-			}
-
-			return rule;
-		},
-
-		rule: function(selector, properties){
-			var rule = this.getRule(selector);
-
-			if( rule ){
-				Object.assign(rule.properties, properties);
-			}
-			else{
-				this.rules.push({
-					selector: selector,
-					properties: properties
-				});
-				// keep rules sorted (the most specific rule is the last applied)
-				this.rules = this.rules.sort(function(a, b){
-					return (a.path ? a.path.length : 0) - (b.path ? b.path.length : 0);
-				});
-			}
-		},
-
-		matchSelector: function(name, selector){
-			var starIndex = selector.indexOf('*'), match = false;
-
-			if( starIndex === -1 ){
-				if( name === selector ){
-					match =  true;
-				}
-			}
-			else{
-				var left = selector.slice(0, starIndex), right = selector.slice(starIndex + 1);
-				var nameLeft = name.slice(0, left.length), nameRight = name.slice(name.length - right.length);
-
-				if( left == nameLeft && right == nameRight ){
-					match = name.slice(left.length, name.length - right.length);
-				}
-			}
-
-			return match;
-		},
-
-		findMeta: function(normalizedName){
-			var meta = {to: normalizedName}, match;
-
-			this.rules.forEach(function(rule){
-				match = this.matchSelector(normalizedName, rule.selector);
-				if( match ){
-					Object.assign(meta, rule.properties);
-
-					/*
-					if( typeof match === 'string' ){
-						for(var key in meta){
-							meta[key] = meta[key].replace('*', match);
-						}
-					}
-					*/
-				}
-			}, this);
-
-			return meta;
 		},
 
 		findStorage: function(url){
@@ -571,20 +499,20 @@
 
 		// https://github.com/systemjs/systemjs/blob/0.17/lib/core.js
 		locate: function(module){
-			var name = module.name, address, meta, to, firstChar;
+			var name = module.name, meta, sourceLocation, firstChar, address;
 
-			meta = this.findMeta(name);
+			meta = this.env.findMeta(name);
 			Object.assign(module.meta, meta);
-			to = module.meta.to;
-			firstChar = to[0];
+			sourceLocation = module.meta.source;
+			firstChar = sourceLocation[0];
 
 			// relative names
 			if( firstChar === '/' || firstChar === '.' ){
-				address = new URI(to, this.baseURL);
+				address = new URI(sourceLocation, this.baseURL);
 			}
 			// absolute names
 			else{
-				address = new URI(to);
+				address = new URI(sourceLocation);
 			}
 
 			definePathnameParts(module, address);
@@ -592,50 +520,52 @@
 			if( module.extname != this.extension ){
 				module.extname = this.extension;
 				address.pathname+= module.extname;
-				module.meta.to+= module.extname;
+				module.meta.source+= module.extname;
+				module.meta.origin+= module.extname;
 			}
 
 			debug('localized', name, 'at', String(address));
+			debug('origin of', name, 'is', module.meta.origin);
+
+			//console.log('ORIGIN', module.name, module.meta.origin);
 
 			return address;
 		},
 
 		fetch: function(module){
-			var to = String(new URI(module.meta.to, this.baseURL));
-			if( typeof to != 'string' ){
+			var sourceLocation = String(new URI(module.meta.source, this.baseURL));
+			if( typeof sourceLocation != 'string' ){
 				throw new TypeError('module.meta.to must be a string');
 			}
-
-			var toStorage = this.findStorage(to);
-			if( !toStorage.get ){
-				throw new Error('unsupported read at ' + to);
+			var sourceStorage = this.findStorage(sourceLocation);
+			if( !sourceStorage.get ){
+				throw new Error('unsupported read at ' + sourceLocation);
 			}
 
-			var promise = toStorage.get(to, {});
-
-			// install mode react on 404 to project by read at from & write at to
+			var promise = sourceStorage.get(sourceLocation, {});
+			// install mode react on 404 to project by read origin & write source
 			if( module.mode === 'install' ){
 				promise = promise.then(function(response){
 					if( response.status != 404 ) return response;
 
-					var from = module.meta.from;
-					if( !from ){
-						throw new Error('cannot install: ' + to + ' has no from location');
+					var originLocation = module.meta.origin;
+					if( !originLocation ){
+						throw new Error('cannot install: ' + sourceLocation + ' has no origin');
 					}
-					if( !toStorage.set ){
-						throw new Error('cannot install: unsupported write at ' + to);
+					if( !sourceStorage.set ){
+						throw new Error('cannot install: unsupported write at ' + sourceLocation);
 					}
-					var fromStorage = this.findStorage(from);
-					if( !fromStorage.get ){
-						throw new Error('cannot install: unsupported read at ' + from);
+					var originStorage = this.findStorage(originLocation);
+					if( !originStorage.get ){
+						throw new Error('cannot install: unsupported read at ' + originLocation);
 					}
 
-					debug(to, 'not found, trying to get it at', from);
-					return fromStorage.get(from, {}).then(function(response){
-						debug('from responded with', response.status);
+					debug(sourceLocation, 'not found, trying to get it at', originLocation);
+					return originStorage.get(originLocation, {}).then(function(response){
+						debug('origin responded with', response.status);
 
 						if( response.status != 200 ) return response;
-						return toStorage.set(to, response.body, {}).then(function(){
+						return sourceStorage.set(sourceLocation, response.body, {}).then(function(){
 							return response;
 						});
 					});
@@ -656,10 +586,10 @@
 
 					var fromPromise = fromStorage.get(from, request);
 
-					if( toStorage.set ){
+					if( sourceStorage.set ){
 						fromPromise = fromPromise.then(function(response){
 							if( response.status != 200 ) return response; // only on 200 status
-							return toStorage.set(to, response.body, {}).then(function(){
+							return sourceStorage.set(sourceLocation, response.body, {}).then(function(){
 								return response;
 							});
 						});
@@ -668,7 +598,6 @@
 					return fromPromise;
 				}.bind(this));
 			}
-
 			promise = promise.then(function(response){
 				module.meta.response = response;
 				if( response.mtime ){
@@ -676,7 +605,7 @@
 				}
 
 				if( response.status === 404 ){
-					throw this.createModuleNotFoundError(to);
+					throw this.createModuleNotFoundError(sourceLocation);
 				}
 				else if( response.status != 200 ){
 					if( response.status === 500 && response.body instanceof Error ){
