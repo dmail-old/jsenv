@@ -241,8 +241,9 @@ if( !Object.assign ){
 					return this.platform.createModuleHttpRequest(url, options);
 				},
 
-				set: function(url, options){
+				set: function(url, body, options){
 					options.method = options.method || 'POST';
+					options.body = body;
 					return this.platform.createModuleHttpRequest(url, options);
 				}
 			});
@@ -255,76 +256,92 @@ if( !Object.assign ){
 					return this.platform.createModuleHttpRequest(url, options);
 				},
 
-				set: function(url, options){
+				set: function(url, body, options){
 					options.method = options.method || 'POST';
+					options.body = body;
 					return this.platform.createModuleHttpRequest(url, options);
 				}
 			});
 		},
 
+		/*
+		live example
+		var giturl = 'https://api.github.com/repos/dmail/argv/contents/index.js?ref=master';
+		var xhr = new XMLHttpRequest();
+		var date = new Date();
+		date.setMonth(0);
+
+		xhr.open('GET', giturl);
+		xhr.setRequestHeader('accept', 'application/vnd.github.v3.raw');
+		xhr.setRequestHeader('if-modified-since', date.toUTCString());
+		xhr.send(null);
+		*/
+		createGithubGetter: function(){
+			return function(url, options){
+				var parsed = new URI(url);
+				var giturl = replace('https://api.github.com/repos/{user}/{repo}/contents/{path}?ref={version}', {
+					user: parsed.username,
+					repo: parsed.host,
+					path: parsed.pathname ? parsed.pathname.slice(1) : 'index.js',
+					version: parsed.hash ? parsed.hash.slice(1) : 'master'
+				});
+
+				options.method = 'GET';
+				options.headers = options.headers || {};
+				Object.assign(options.headers, {
+					'accept': 'application/vnd.github.v3.raw',
+					'User-Agent': 'jsenv' // https://developer.github.com/changes/2013-04-24-user-agent-required/
+				});
+
+				return this.platform.createModuleHttpRequest(giturl, options);
+			};
+		},
+
+		/*
+		live example (only to create, updating would need the SHA)
+		author & committer are optional
+		var giturl = 'https://api.github.com/repos/dmail/argv/contents/test.js';
+		var xhr = new XMLHttpRequest();
+
+		xhr.open('PUT', giturl);
+		xhr.setRequestHeader('Authorization', 'token 0b6d30a35dd7eac332909186379673b56e1f03c2');
+		xhr.setRequestHeader('content-type', 'application/json');
+		xhr.send(JSON.stringify({
+			message: 'create test.js',
+			content: btoa('Hello world'),
+			branch: 'master'
+		}));
+		*/
+		// https://developer.github.com/v3/repos/contents/#create-a-file
+		// http://stackoverflow.com/questions/26203603/how-do-i-get-the-sha-parameter-from-github-api-without-downloading-the-whole-f
+		createGithubSetter: function(){
+			return function(url, body, options){
+				var giturl = replace('https://api.github.com/repos/{user}/{repo}/contents/{path}', {
+
+				});
+
+				options.method = 'PUT';
+				options.headers = options.headers || {};
+				options.body = JSON.stringify({
+					message: 'update ' + giturl.pathname,
+					content: Base64.encode(body)
+				});
+
+				Object.assign(options.headers, {
+					'User-Agent': 'jsenv',
+					'content-type': 'application/json'
+				});
+
+				return this.platform.createModuleHttpRequest(giturl, options);
+			};
+		},
+
+		// TODO https://developer.github.com/v3/#http-redirects
 		createGithubStorage: function(){
-			/*
-			live example
-			var giturl = 'https://api.github.com/repos/dmail/argv/contents/index.js?ref=master';
-			var xhr = new XMLHttpRequest();
-			var date = new Date();
-			date.setMonth(0);
-
-			xhr.open('GET', giturl);
-			xhr.setRequestHeader('accept', 'application/vnd.github.v3.raw');
-			xhr.setRequestHeader('if-modified-since', date.toUTCString());
-			xhr.send(null);
-			*/
-			var githubStorage = this.createStorage('github', {
-				get: function(url, options){
-					var parsed = new URI(url);
-					var giturl = replace('https://api.github.com/repos/{user}/{repo}/contents/{path}?ref={version}', {
-						user: parsed.username,
-						repo: parsed.host,
-						path: parsed.pathname ? parsed.pathname.slice(1) : 'index.js',
-						version: parsed.hash ? parsed.hash.slice(1) : 'master'
-					});
-
-					options.method = 'GET';
-					options.headers = options.headers || {};
-					Object.assign(options.headers, {
-						'accept': 'application/vnd.github.v3.raw',
-						'User-Agent': 'jsenv' // https://developer.github.com/changes/2013-04-24-user-agent-required/
-					});
-
-					return this.platform.createModuleHttpRequest(giturl, options);
-				},
-
-				/*
-				// For POST, PATCH, PUT, and DELETE requests,
-				// parameters not included in the URL should be encoded as JSON with a Content-Type of ‘application/json’
-				// https://developer.github.com/v3/repos/contents/#create-a-file
-				set: function(url, options){
-					// il faut s'authentifier
-					// il faut faire une requête get pour savoir si le fichier existe
-					// s'il existe envoyer PUT + sha
-					// sinon POST
-					var giturl = replace('https://api.github.com/repos/{user}/{repo}/contents/{path}', {
-
-					});
-
-					options.method = 'POST';
-					options.headers = options.headers || {};
-					options.body = JSON.stringify({
-						message: 'update ' + parsed.pathname,
-						content: btoa(options.body) // or new Buffer(options.body).toString('base64')
-						//name: ''// the name of the author for this commit
-						//email: '' // email of the author for this commit
-					});
-
-					Object.assign(options.headers, {
-						'User-Agent': 'jsenv'
-					});
-				}
-				*/
+			return this.createStorage('github', {
+				get: this.createGithubGetter(),
+				//set: this.createGithubSetter()
 			});
-
-			return githubStorage;
 		},
 
 		setupStorages: function(){
@@ -1061,6 +1078,7 @@ if( !Object.assign ){
 			}
 		});
 	});
+	jsenv.need('/requirements/Base64.js');
 	jsenv.need('/requirements/loader.js');
 	jsenv.need('/requirements/global.env.js');
 	jsenv.need('./project.env.js');

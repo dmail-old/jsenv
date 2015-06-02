@@ -548,7 +548,7 @@
 				promise = promise.then(function(response){
 					if( response.status != 404 ) return response;
 
-					var originLocation = module.meta.origin;
+					var originLocation = String(new URI(module.meta.origin, this.baseURL));
 					if( !originLocation ){
 						throw new Error('cannot install: ' + sourceLocation + ' has no origin');
 					}
@@ -571,7 +571,7 @@
 					});
 				}.bind(this));
 			}
-			// update mode react on 200 to project by read at from & write at to when from is more recent
+			// update mode react on 200 to project by read origin & write source when from is more recent
 			else if( module.mode === 'update' ){
 				promise = promise.then(function(response){
 					if( response.status != 200 ) return response;
