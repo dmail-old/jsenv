@@ -59,7 +59,7 @@
 		return output.join('').replace(/^\//, input.charAt(0) === '/' ? '/' : '');
 	}
 
-	var URI = {
+	var URI = Function.create({
 		constructor: function(url, base){
 			url = parseURI(url);
 
@@ -128,9 +128,7 @@
 
 			return url;
 		}
-	};
-	URI.constructor.prototype = URI;
-	URI = URI.constructor;
+	});
 
 	global.URI = URI;
 

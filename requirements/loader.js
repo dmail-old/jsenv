@@ -1,10 +1,9 @@
-/* globals create, debug, extend */
+/* globals debug */
 
 (function(jsenv){
-	// object representing an attempt to locate/fetch/translate/parse a module
-	var Module = create({
-		mode: 'run', // 'install', 'update', 'run'
 
+	// object representing an attempt to locate/fetch/translate/parse a module
+	var Module = Function.create({
 		loader: null, // loader used to load this module
 		status: null, // loading, loaded, failed
 		meta: null,
@@ -57,8 +56,6 @@
 		locate: function(){
 			this.step = 'locate';
 
-			debug('locate', this);
-
 			var promise;
 
 			if( this.hasOwnProperty('address') ){
@@ -77,7 +74,7 @@
 		fetch: function(){
 			this.step = 'fetch';
 
-			debug('fetch', this);
+			debug(this, 'fetch');
 
 			var promise;
 
@@ -145,7 +142,7 @@
 			}
 			else if( Object(result) === result ){
 				if( result.length ){
-					debug(this, 'has the following dependencies in source', result.map(String));
+					debug(this, 'source dependencies:', result.map(String));
 					result.forEach(this.declareDependency, this);
 				}
 				else{
@@ -186,7 +183,7 @@
 			else{
 				value = this.loader.execute(this);
 				this.value = value;
-				debug('executed', this, 'getting a value of type', typeof value);
+				debug(this, 'execute:', typeof value);
 			}
 
 			return value;
@@ -246,7 +243,7 @@
 		}
 	});
 
-	var ES6Loader = create({
+	var ES6Loader = Function.create({
 		modules: null, // module registry
 
 		constructor: function(options){
@@ -455,7 +452,7 @@
 		return parts.join('/');
 	}
 
-	var jsenvLoader = extend(ES6Loader, {
+	var jsenvLoader = Function.extend(ES6Loader, {
 		constructor: function(env, options){
 			ES6Loader.call(this, options);
 			this.env = env;
@@ -476,12 +473,12 @@
 			var absURLRegEx = /^([^\/]+:\/\/|\/)/;
 			var firstChar = name[0], normalizedName;
 
-			if( firstChar === '.' && contextAddress ){
-				if( contextAddress.match(absURLRegEx) ){
-					normalizedName = new URI(name, contextAddress);
+			if( firstChar === '.' && contextName ){
+				if( contextName.match(absURLRegEx) ){
+					normalizedName = new URI(name, contextName);
 				}
 				else{
-					normalizedName = resolvePath(name, contextAddress);
+					normalizedName = resolvePath(name, contextName);
 				}
 			}
 			else if( firstChar === '.' || firstChar === '/' ){
@@ -492,7 +489,9 @@
 			}
 
 			normalizedName = String(normalizedName);
-			debug('normalizing', name, contextAddress, String(contextAddress), 'to', normalizedName);
+			var meta = this.env.findMeta(normalizedName);
+			if( meta.alias ) normalizedName = meta.alias;
+			debug(name, 'normalize:', normalizedName);
 
 			return normalizedName;
 		},
@@ -524,8 +523,8 @@
 				module.meta.origin+= module.extname;
 			}
 
-			debug('localized', name, 'at', String(address));
-			debug('origin of', name, 'is', module.meta.origin);
+			debug(name, 'source:', module.meta.source);
+			debug(name, 'origin:', module.meta.origin);
 
 			//console.log('ORIGIN', module.name, module.meta.origin);
 
@@ -542,9 +541,11 @@
 				throw new Error('unsupported read at ' + sourceLocation);
 			}
 
+			var mode = this.env.mode;
 			var promise = sourceStorage.get(sourceLocation, {});
+
 			// install mode react on 404 to project by read origin & write source
-			if( module.mode === 'install' ){
+			if( mode === 'install' ){
 				promise = promise.then(function(response){
 					if( response.status != 404 ) return response;
 
@@ -565,6 +566,8 @@
 						debug('origin responded with', response.status);
 
 						if( response.status != 200 ) return response;
+
+						debug('writing body at', sourceLocation);
 						return sourceStorage.set(sourceLocation, response.body, {}).then(function(){
 							return response;
 						});
@@ -572,32 +575,34 @@
 				}.bind(this));
 			}
 			// update mode react on 200 to project by read origin & write source when from is more recent
-			else if( module.mode === 'update' ){
+			else if( mode === 'update' ){
 				promise = promise.then(function(response){
 					if( response.status != 200 ) return response;
 
-					var from = module.meta.from;
-					if( !from ) return response;
+					var originLocation = String(new URI(module.meta.origin, this.baseURL));
+					if( !originLocation ){
+						debug('skip update : undefined origin', sourceLocation);
+						return response;
+					}
+					if( !sourceStorage.set ){
+						debug('skip update : unwritable source', sourceLocation);
+						return response;
+					}
 
-					var fromStorage = this.findStorage(from);
+					var originStorage = this.findStorage(originLocation);
 					var request = {
 						mtime:  module.meta.mtime
 					};
 
-					var fromPromise = fromStorage.get(from, request);
-
-					if( sourceStorage.set ){
-						fromPromise = fromPromise.then(function(response){
-							if( response.status != 200 ) return response; // only on 200 status
-							return sourceStorage.set(sourceLocation, response.body, {}).then(function(){
-								return response;
-							});
+					return originStorage.get(originLocation, request).then(function(response){
+						if( response.status != 200 ) return response; // only on 200 status
+						return sourceStorage.set(sourceLocation, response.body, {}).then(function(){
+							return response;
 						});
-					}
-
-					return fromPromise;
+					});
 				}.bind(this));
 			}
+
 			promise = promise.then(function(response){
 				module.meta.response = response;
 				if( response.mtime ){

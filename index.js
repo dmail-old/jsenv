@@ -8,10 +8,6 @@ https://github.com/ModuleLoader/es6-module-loader/blob/master/src/loader.js#L885
 https://gist.github.com/dherman/7568080
 https://github.com/ModuleLoader/es6-module-loader/wiki/Extending-the-ES6-Loader
 
-origin devrait passer par la config aussi
-github://dmail@argv -> github://dmail@argv/main.js si module.meta.main = "main"
-il faudrais limit appeler locate() sur origin
-
 */
 
 function forOf(iterable, fn, bind){
@@ -55,17 +51,17 @@ function debug(){
 	console.log.apply(console, args);
 }
 
-function create(proto){
+Function.create = function(proto){
 	proto.constructor.prototype = proto;
 	return proto.constructor;
-}
+};
 
-function extend(constructor, proto){
+Function.extend = function(constructor, proto){
 	var object = Object.create(constructor.prototype);
 	for(var key in proto ) object[key] = proto[key];
 	object.constructor.prototype = object;
 	return object.constructor;
-}
+};
 
 function replace(string, values){
 	return string.replace((/\\?\{([^{}]+)\}/g), function(match, name){
@@ -99,7 +95,7 @@ if( !Object.assign ){
 	};
 
 	// requirements
-	var Requirement = create({
+	var Requirement = Function.create({
 		path: null,
 
 		constructor: function(options){
@@ -141,8 +137,6 @@ if( !Object.assign ){
 		},
 
 		loadRequirements: function(){
-			this.global.forOf = this.forOf = forOf;
-
 			var self = this, requirements = this.requirements, requirement;
 
 			self.requirementIndex = 0;
@@ -191,7 +185,7 @@ if( !Object.assign ){
 	});
 
 	// storages
-	var Storage = create({
+	var Storage = Function.create({
 		constructor: function(platform, name, options){
 			this.platform = platform;
 			this.name = name;
@@ -200,7 +194,7 @@ if( !Object.assign ){
 	});
 
 	// platforms
-	var Platform = create({
+	var Platform = Function.create({
 		constructor: function(env, type, options){
 			this.env = env;
 			this.type = String(type);
@@ -212,12 +206,15 @@ if( !Object.assign ){
 		setup: function(){
 			this.name = this.getName();
 			this.version = this.getVersion();
-			debug('platform type :', this.type, '(', this.name, this.version, ')');
-
 			this.global = this.getGlobal();
 			this.baseURL = this.getBaseUrl();
 			this.filename = this.getSrc();
 			this.dirname = this.filename.slice(0, this.filename.lastIndexOf('/'));
+
+			this.global.forOf = this.env.forOf = forOf;
+			this.global.debug = debug;
+
+			debug('platform type :', this.type, '(', this.name, this.version, ')');
 		},
 
 		createModuleHttpRequest: function(url, options){
@@ -298,7 +295,7 @@ if( !Object.assign ){
 		},
 
 		/*
-		live example (only to create, updating would need the SHA)
+		live example (only to create, updating need the SHA)
 		author & committer are optional
 		var giturl = 'https://api.github.com/repos/dmail/argv/contents/test.js';
 		var xhr = new XMLHttpRequest();
@@ -314,6 +311,8 @@ if( !Object.assign ){
 		*/
 		// https://developer.github.com/v3/repos/contents/#create-a-file
 		// http://stackoverflow.com/questions/26203603/how-do-i-get-the-sha-parameter-from-github-api-without-downloading-the-whole-f
+		// en mode install il suffit de faire un create file avec PUT
+		// en mode update il faut update le fichier avec un PUT mais c'est plus complexe
 		createGithubSetter: function(){
 			return function(url, body, options){
 				var giturl = replace('https://api.github.com/repos/{user}/{repo}/contents/{path}', {
@@ -743,7 +742,7 @@ if( !Object.assign ){
 					console.log(options.method, url);
 
 					function resolveWithHttpResponse(httpResponse){
-						var buffers = [], length;
+						var buffers = [], length = 0;
 						httpResponse.addListener('data', function(chunk){
 							buffers.push(chunk);
 							length+= chunk.length;
@@ -776,6 +775,15 @@ if( !Object.assign ){
 			}
 
 			return createRequest;
+		},
+
+		init: function(){
+			if( require.main === module ){
+				throw new Error('jsenv must be required');
+			}
+
+			// ensure a minimal delay before calling init
+			setTimeout(this.env.init.bind(this.env), 0);
 		}
 	});
 	jsenv.platforms.push(processPlatform);
@@ -785,8 +793,7 @@ if( !Object.assign ){
 		mainModule: 'index',
 
 		include: function(normalizedName, options){
-			normalizedName = String(normalizedName);
-
+			normalizedName = this.loader.normalize(normalizedName);
 			var module = this.loader.createModule(normalizedName);
 
 			// prevent locate()
@@ -807,19 +814,19 @@ if( !Object.assign ){
 		link: function(from, to, main, fromType){
 			var list = this[fromType === 'source' ? 'sourceLinks' : 'originLinks'];
 
+			if( main ){
+				list.push({
+					from: from,
+					to: from + '/' + main,
+					type: 'file'
+				});
+			}
+
 			list.push({
 				from: from,
 				to: to,
 				type: main ? 'directory' : 'file'
 			});
-
-			if( main ){
-				list.push({
-					from: to,
-					to: to + '/' + main,
-					type: 'file'
-				});
-			}
 		},
 
 		linkSource: function(from, to, main){
@@ -850,7 +857,7 @@ if( !Object.assign ){
 		},
 
 		follow: function(from, fromType){
-			if( fromType === 'origin' ) from = this.follow(from, 'source');
+			//if( fromType === 'origin' ) from = this.follow(from, 'source');
 
 			var current = from, to = from;
 
@@ -860,18 +867,20 @@ if( !Object.assign ){
 				if( link.type === 'file' ){
 					if( current === link.from ){
 						to = link.to;
-						debug('follow', fromType, 'link from', current, 'to', to);
 						current = to;
 					}
 				}
 				else if( link.type === 'directory' ){
 					if( this.isInside(current, link.from) ){
 						to = link.to + current.slice(link.from.length);
-						debug('follow', fromType, 'link from', current, 'to', to);
 						current = to;
 					}
 				}
 			}, this);
+
+			if( from != to ){
+				//debug(from, fromType, 'linked to:', to);
+			}
 
 			return to;
 		},
@@ -908,28 +917,43 @@ if( !Object.assign ){
 			}
 		},
 
-		matchSelector: function(name, selector){
-			return name === selector;
-		},
-
 		findMeta: function(normalizedName){
-			var source, meta, match, selector, properties, origin;
+			var name, source, meta, match, selector, properties, origin;
 
-			source = normalizedName;
-			source = this.follow(source, 'source');
-			origin = this.follow(source, 'origin');
+			name = normalizedName;
+			//source = this.follow(normalizedName, 'source');
+			//origin = this.follow(normalizedName, 'origin');
 
 			meta = {
-				source: source,
-				origin: origin
+				source: name
 			};
 
 			this.rules.forEach(function(rule){
 				selector = rule.selector;
-				match = this.matchSelector(source, selector);
+				match = false;
+
+				if( name === selector ){
+					match = 'file';
+				}
+				else if( this.isInside(name, selector) ){
+					match = 'directory';
+				}
+
 				if( match ){
 					properties = rule.properties;
 					Object.assign(meta, properties);
+
+					if( match === 'file' ){
+						if( meta.main ){
+							meta.alias = name + '/' + meta.main;
+							if( meta.source ) meta.source+= '/' + meta.main;
+							if( meta.origin ) meta.origin+= '/' + meta.main;
+						}
+					}
+					else if( match === 'directory' ){
+						if( meta.source ) meta.source = meta.source + name.slice(selector.length);
+						if( meta.origin ) meta.origin = meta.origin + name.slice(selector.length);
+					}
 				}
 			}, this);
 
@@ -1011,6 +1035,8 @@ if( !Object.assign ){
 	});
 
 	Object.assign(jsenv, {
+		mode: 'run', // 'install', 'update', 'run'
+
 		setup: function(){
 			this.platform = this.findPlatform();
 			if( this.platform == null ){
@@ -1037,11 +1063,11 @@ if( !Object.assign ){
 		// called when jsenv is ready
 		init: function(){
 			if( this.mainModule ){
-				debug('including the mainModule', this.mainModule);
-
 				var main = this.main = this.loader.createModule(
 					/*this.loader.normalize(*/this.mainModule//)
 				);
+
+				debug(this.mode, 'main module', this.mainModule);
 
 				main.then(function(){
 					main.parse();

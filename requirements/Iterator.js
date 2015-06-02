@@ -1,7 +1,5 @@
-/* globals create, extend */
-
 (function(global){
-	var Iterator = create({
+	var Iterator = Function.create({
 		constructor: function(object, keyOnly){
 			if( arguments.length === 0 ){
 				throw new TypeError('missing argument 0 when calling function Iterator');
@@ -66,7 +64,7 @@
 	};
 
 	// see http://people.mozilla.org/~jorendorff/es6-draft.html#sec-array-iterator-objects
-	var ArrayIterator = extend(Iterator, {
+	var ArrayIterator = Function.extend(Iterator, {
 		constructor: function(array, kind){
 			if( !(array instanceof Array) ){
 				throw new TypeError('array expected');
@@ -105,7 +103,7 @@
 	});
 
 	// see http://people.mozilla.org/~jorendorff/es6-draft.html#sec-%stringiteratorprototype%.next
-	var StringIterator = extend(Iterator, {
+	var StringIterator = Function.extend(Iterator, {
 		iteratedString: null,
 		nextIndex: null,
 		result: null,

@@ -9,7 +9,7 @@ But The main goal is to have String(Symbol.iterator) returning a string in non e
 */
 
 (function(global){
-	var HiddenSymbol = {
+	var HiddenSymbol = Function.create({
 		key: null,
 		name: null,
 		names: {},
@@ -45,18 +45,14 @@ But The main goal is to have String(Symbol.iterator) returning a string in non e
 		valueOf: function(){
 			return this;
 		}
-	};
-	HiddenSymbol.constructor.prototype = HiddenSymbol;
-	HiddenSymbol = HiddenSymbol.constructor;
+	});
 
-	var Symbol = {
+	var Symbol = Function.create({
 		constructor: function(key){
 			if( this instanceof Symbol ) throw new TypeError('TypeError: Symbol is not a constructor');
 			return new HiddenSymbol(key);
 		}
-	};
-	Symbol.constructor.prototype = Symbol;
-	Symbol = Symbol.constructor;
+	});
 
 	[
 		'hasInstance',

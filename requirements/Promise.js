@@ -18,7 +18,7 @@
 		return Object(object) == object ? typeof object.then === 'function' : false;
 	}
 
-	var Promise = {
+	var Promise = Function.create({
 		executor: function(resolve, reject){},
 		state: 'pending',
 		value: null,
@@ -209,10 +209,7 @@
 		catch: function(onreject){
 			return this.then(null, onreject);
 		}
-	};
-
-	Promise.constructor.prototype = Promise;
-	Promise = Promise.constructor;
+	});
 
 	// que fait-on lorsque value est thenable?
 	Promise.resolve = function(value){
