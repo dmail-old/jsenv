@@ -28,7 +28,7 @@ function symlink(source, destination){
 				}
 			});
 		}
-		// the file or folder exists, we should rmdirRecursive or unlink file
+		// it's a file or a directory, we should rmdirRecursive or unlink file
 		else{
 			throw new Error(destination + 'exists, please delete this');
 		}

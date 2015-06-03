@@ -27,7 +27,7 @@ function createDirectory(dir){
 }
 
 function createDirectoriesTo(location){
-	var directories = location.split('/');
+	var directories = location.replace(/\\/g, '/').split('/');
 
 	directories.pop();
 
