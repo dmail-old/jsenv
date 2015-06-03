@@ -214,6 +214,8 @@ Object.complete = function(){
 
 	// platforms
 	var Platform = Function.create({
+		retryTimeout: 100, // retry 503 request for this duration
+
 		constructor: function(env, type, options){
 			this.env = env;
 			this.type = String(type);
@@ -242,12 +244,33 @@ Object.complete = function(){
 				options.headers['if-modified-since'] = options.mtime;
 			}
 
-			return this.httpRequestFactory(url, options).then(function(response){
+			return this.httpRequestFactory(url, options)
+			// mtime
+			.then(function(response){
 				if( response.headers && 'last-modified' in response.headers ){
 					response.mtime = new Date(response.headers['last-modified']);
 				}
 				return response;
-			});
+			// 503
+			}).then(function(response){
+				if( response.status === 503 && response.headers && 'retry-after' in response.headers ){
+					var lastRetry = options['last-retry'] || 0;
+					var retryAfter = response.headers['retry-after'];
+					var retryDuration = lastRetry + retryAfter;
+					var platform = this;
+
+					if( retryDuration <= this.retryTimeout ){
+						options['last-retry'] = retryDuration;
+
+						return new Promise(function(resolve, reject){
+							setTimeout(function(){
+								resolve(platform.createModuleHttpRequest(url, options));
+							}, retryAfter);
+						});
+					}
+				}
+				return response;
+			}.bind(this));
 		},
 
 		createHttpStorage: function(){
@@ -702,42 +725,57 @@ Object.complete = function(){
 				return filesystem('writeFile', file, content);
 			}
 
-			return this.createStorage('file', {
-				get: function(url, options){
-					url = String(url).slice('file://'.length);
+			function createGetter(url, options){
+				url = String(url).slice('file://'.length);
 
-					return readFile(url).then(function(content){
-						return filesystem('stat', url).then(function(stat){
-							if( options && options.mtime && stat.mtime <= options.mtime ){
-								return {
-									status: 302,
-									mtime: stat.mtime
-								};
-							}
+				return readFile(url).then(function(content){
+					return filesystem('stat', url).then(function(stat){
+						if( options && options.mtime && stat.mtime <= options.mtime ){
 							return {
-								status: 200,
-								body: content,
+								status: 302,
 								mtime: stat.mtime
 							};
-						});
-					}).catch(function(error){
-						if( error && error.code == 'ENOENT' ){
+						}
+						return {
+							status: 200,
+							body: content,
+							mtime: stat.mtime
+						};
+					});
+				}).catch(function(error){
+					if( error ){
+						if( error.code == 'ENOENT' ){
 							return {
 								status: 404
 							};
 						}
-						return {
-							status: 500,
-							body: error
-						};
-					});
+						// file access may be temporarily blocked, for instance by an antivirus scanning it
+						// because it was recently modified
+						if( error.code === 'EBUSY' ){
+							return {
+								status: 503, // unavailable,
+								headers: {
+									'retry-after': 10 // retry in 10ms
+								}
+							};
+						}
+					}
+					return {
+						status: 500,
+						body: error
+					};
+				});
+			}
+
+			var mkdirto = require('./utils/mkdir-to');
+
+			return this.createStorage('file', {
+				get: function(url, options){
+					return createGetter(url, options);
 				},
 
 				set: function(url, body, options){
 					url = String(url).slice('file://'.length);
-					// writeFile doit faire un mkdir-to
-
-					var mkdirto = require('./utils/mkdir-to');
 
 					return mkdirto(url).then(function(){
 						return writeFile(url, body);
