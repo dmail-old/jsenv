@@ -70,24 +70,43 @@ function replace(string, values){
 	});
 }
 
-if( !Object.assign ){
-	Object.assign = function(object){
-		var i = 1, j = arguments.length, owner, keys, n, m, key;
+function mapProperties(args, fn){
+	var object = args[0], i = 1, j = arguments.length, owner, keys, n, m;
 
-		for(;i<j;i++){
-			owner = arguments[i];
-			if( Object(owner) != owner ) continue;
-			keys = Object.keys(owner);
-			n = 0;
-			m = keys.length;
+	for(;i<j;i++){
+		owner = arguments[i];
+		if( Object(owner) != owner ) continue;
+		keys = Object.keys(owner);
+		n = 0;
+		m = keys.length;
 
-			for(;n<m;n++){
-				key = keys[n];
-				object[key] = owner[key];
-			}
+		for(;n<m;n++){
+			fn(object, keys[n], owner);
 		}
+	}
+}
+
+if( !Object.assign ){
+	Object.assign = function(){
+		mapProperties(arguments, function(object, key, owner){
+			object[key] = owner[key];
+		});
 	};
 }
+
+Object.complete = function(){
+	mapProperties(arguments, function(object, key, owner){
+		if( key in object ){
+			var current = object[key], value = owner[key];
+			if( typeof current === 'object' && typeof value === 'object' ){
+				Object.complete(current, value);
+			}
+			return;
+		}
+
+		object[key] = owner[key];
+	});
+};
 
 (function(){
 	var jsenv = {
@@ -234,13 +253,17 @@ if( !Object.assign ){
 		createHttpStorage: function(){
 			return this.createStorage('http', {
 				get: function(url, options){
-					options.method = options.method || 'GET';
+					Object.complete(options, {
+						method: 'GET'
+					});
 					return this.platform.createModuleHttpRequest(url, options);
 				},
 
 				set: function(url, body, options){
-					options.method = options.method || 'POST';
-					options.body = body;
+					Object.complete(options, {
+						method: 'GET',
+						body: body
+					});
 					return this.platform.createModuleHttpRequest(url, options);
 				}
 			});
@@ -249,13 +272,17 @@ if( !Object.assign ){
 		createHttpsStorage: function(){
 			return this.createStorage('https', {
 				get: function(url, options){
-					options.method = 'GET';
+					Object.complete(options, {
+						method: 'GET'
+					});
 					return this.platform.createModuleHttpRequest(url, options);
 				},
 
 				set: function(url, body, options){
-					options.method = options.method || 'POST';
-					options.body = body;
+					Object.complete(options, {
+						method: 'POST',
+						body: body
+					});
 					return this.platform.createModuleHttpRequest(url, options);
 				}
 			});
@@ -283,11 +310,12 @@ if( !Object.assign ){
 					version: parsed.hash ? parsed.hash.slice(1) : 'master'
 				});
 
-				options.method = 'GET';
-				options.headers = options.headers || {};
-				Object.assign(options.headers, {
-					'accept': 'application/vnd.github.v3.raw',
-					'User-Agent': 'jsenv' // https://developer.github.com/changes/2013-04-24-user-agent-required/
+				Object.complete(options, {
+					method: 'GET',
+					headers: {
+						'accept': 'application/vnd.github.v3.raw',
+						'User-Agent': 'jsenv' // https://developer.github.com/changes/2013-04-24-user-agent-required/
+					}
 				});
 
 				return this.platform.createModuleHttpRequest(giturl, options);
@@ -319,16 +347,16 @@ if( !Object.assign ){
 
 				});
 
-				options.method = 'PUT';
-				options.headers = options.headers || {};
-				options.body = JSON.stringify({
-					message: 'update ' + giturl.pathname,
-					content: Base64.encode(body)
-				});
-
-				Object.assign(options.headers, {
-					'User-Agent': 'jsenv',
-					'content-type': 'application/json'
+				Object.complete(options, {
+					method: 'PUT',
+					headers: {
+						'content-type': 'application/json',
+						'User-Agent': 'jsenv'
+					},
+					body: JSON.stringify({
+						message: 'update ' + giturl.pathname,
+						content: Base64.encode(body)
+					})
 				});
 
 				return this.platform.createModuleHttpRequest(giturl, options);
@@ -782,6 +810,10 @@ if( !Object.assign ){
 				throw new Error('jsenv must be required');
 			}
 
+			if( !this.mode ){
+				this.mode = process.env.JSENV_MODE;
+			}
+
 			// ensure a minimal delay before calling init
 			setTimeout(this.env.init.bind(this.env), 0);
 		}
@@ -808,35 +840,6 @@ if( !Object.assign ){
 			});
 		},
 
-		sourceLinks: [],
-		originLinks: [],
-
-		link: function(from, to, main, fromType){
-			var list = this[fromType === 'source' ? 'sourceLinks' : 'originLinks'];
-
-			if( main ){
-				list.push({
-					from: from,
-					to: from + '/' + main,
-					type: 'file'
-				});
-			}
-
-			list.push({
-				from: from,
-				to: to,
-				type: main ? 'directory' : 'file'
-			});
-		},
-
-		linkSource: function(from, to, main){
-			return this.link(from, to, main, 'source');
-		},
-
-		linkOrigin: function(from, to, main){
-			return this.link(from, to, main, 'origin');
-		},
-
 		isInside: function(path, potentialParent){
 			function stripLastSep(path){
 				if( path[path.length - 1] === '/' ){
@@ -849,40 +852,11 @@ if( !Object.assign ){
 			potentialParent = stripLastSep(potentialParent);
 
 			// they are the same
-			if( path === potentialParent ) return true;
+			if( path === potentialParent ) return false;
 			// 'folder2' not inside 'folder'
 			if( path[potentialParent.length] != '/' ) return false;
 			// 'folder/file.js' starts with 'folder'
 			return path.indexOf(potentialParent) === 0;
-		},
-
-		follow: function(from, fromType){
-			//if( fromType === 'origin' ) from = this.follow(from, 'source');
-
-			var current = from, to = from;
-
-			this[fromType === 'source' ? 'sourceLinks' : 'originLinks'].forEach(function(link){
-				//debug('is there a link for', current, this.isInside(current, link.from));
-
-				if( link.type === 'file' ){
-					if( current === link.from ){
-						to = link.to;
-						current = to;
-					}
-				}
-				else if( link.type === 'directory' ){
-					if( this.isInside(current, link.from) ){
-						to = link.to + current.slice(link.from.length);
-						current = to;
-					}
-				}
-			}, this);
-
-			if( from != to ){
-				//debug(from, fromType, 'linked to:', to);
-			}
-
-			return to;
 		},
 
 		rules: [],
@@ -933,26 +907,28 @@ if( !Object.assign ){
 				match = false;
 
 				if( name === selector ){
-					match = 'file';
+					match = 'equals';
 				}
 				else if( this.isInside(name, selector) ){
-					match = 'directory';
+					match = 'inside';
 				}
 
 				if( match ){
 					properties = rule.properties;
 					Object.assign(meta, properties);
 
-					if( match === 'file' ){
+					if( match === 'equals' ){
 						if( meta.main ){
-							meta.alias = name + '/' + meta.main;
+							if( !meta.alias ) meta.alias = name;
+							meta.alias+= '/' + meta.main;
 							if( meta.source ) meta.source+= '/' + meta.main;
 							if( meta.origin ) meta.origin+= '/' + meta.main;
 						}
 					}
-					else if( match === 'directory' ){
-						if( meta.source ) meta.source = meta.source + name.slice(selector.length);
-						if( meta.origin ) meta.origin = meta.origin + name.slice(selector.length);
+					else if( match === 'inside' ){
+						if( meta.alias ) meta.alias+= name.slice(selector.length);
+						if( meta.source ) meta.source+= name.slice(selector.length);
+						if( meta.origin ) meta.origin+= name.slice(selector.length);
 					}
 				}
 			}, this);
@@ -1035,7 +1011,7 @@ if( !Object.assign ){
 	});
 
 	Object.assign(jsenv, {
-		mode: 'run', // 'install', 'update', 'run'
+		mode: undefined, // 'install', 'update', 'run'
 
 		setup: function(){
 			this.platform = this.findPlatform();
@@ -1066,6 +1042,10 @@ if( !Object.assign ){
 				var main = this.main = this.loader.createModule(
 					/*this.loader.normalize(*/this.mainModule//)
 				);
+
+				if( !this.mode ){
+					throw new Error('jsenv mode not set');
+				}
 
 				debug(this.mode, 'main module', this.mainModule);
 
