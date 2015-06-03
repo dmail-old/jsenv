@@ -11,8 +11,6 @@ function lstat(location){
 }
 
 function symlink(source, destination){
-	debug('symlink', source, destination);
-
 	return lstat(destination).then(function(stat){
 		// check the existing symbolic link
 		if( stat.isSymbolicLink() ){
@@ -42,6 +40,8 @@ function symlink(source, destination){
 		return Promise.reject(error);
 	// do symlink
 	}).then(function(){
+		debug('symlink', source, destination);
+
 		return filesystem('symlink', source, destination, 'junction');
 	// eexist is not an error
 	}).catch(function(error){

@@ -6,8 +6,9 @@ var jsenvGlobalFolder = path.dirname(process.env.JSENV_GLOBAL_PATH);
 var jsenvProjectFolder = path.dirname(process.env.JSENV_PROJECT_PATH);
 var globalProjectFolder = jsenvGlobalFolder + '/project';
 var projectFolder = process.cwd();
+var initFile = projectFolder + '/init.js';
 
-// if modules/jsenv exists that's great, else we symlink it to the global env
+// if modules/jsenv exists that's great, else we symlink it to the global version
 if( !fs.lstatSync(jsenvProjectFolder).isDirectory() ){
 	symlink(jsenvGlobalFolder, jsenvProjectFolder).catch(function(error){
 		console.log(error.stack);
@@ -25,5 +26,9 @@ fs.readdirSync(globalProjectFolder).map(function(name){
 		fs.writeFileSync(projectFile, fs.readFileSync(globalProjectFile));
 	}
 });
+
+if( fs.existsSync(initFile) ){
+	require(initFile);
+}
 
 // si un .gitignore, ajouter modules/ ?
