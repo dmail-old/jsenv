@@ -26,7 +26,7 @@ process.env.JSENV_PROJECT_PATH = resolved;
 var cmd = process.argv[2] || 'start';
 
 try{
-	require('./commands/' + cmd);
+	require('./utils/commands/' + cmd);
 }
 catch(e){
 	if( e.code === 'MODULE_NOT_FOUND' ){

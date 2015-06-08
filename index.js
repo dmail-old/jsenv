@@ -194,15 +194,28 @@ Object.complete = function(){
 		baseURL: './', // relative to baseURI
 
 		aliases: {
-			// platform
-			'http': '/platforms/{platform}/{platform}-http.js',
-			'storages': '/platforms/{platform}/{platform}-storages.js',
-			'more': '/platforms/{platform}/{platform}-more.js',
-			// env
+			// dependencies
+			'URI': '/requirements/URI.js',
+			'setImmediate': '/requirements/setImmediate.js',
+			'Symbol': '/requirements/Symbol.js',
+			'Iterator': '/requirements/Iterator.js',
+			'Promise': '/requirements/Promise.js',
+
+			// lib
 			'module': '/lib/module.js',
 			'es6-loader': '/lib/es6-loader.js',
 			'loader': '/lib/loader.js',
 			'config': '/lib/config.js',
+
+			// loaders
+			'loader-js': '/loaders/loader-js.js',
+			'loader-css': '/loaders/loader-css.js',
+
+			// platform
+			'http': '/platforms/{platform}/{platform}-http.js',
+			'storages': '/platforms/{platform}/{platform}-storages.js',
+			'more': '/platforms/{platform}/{platform}-more.js',
+
 			'env-storages': '/lib/storages.js',
 			'env-global': '/lib/global.env.js',
 			// project
@@ -395,11 +408,7 @@ Object.complete = function(){
 		},
 
 		listEnvRequirements: function(){
-			var requirements = [
-				'URI'
-			];
-
-			return requirements.concat([
+			var polyfills = [
 				'setImmediate', // because required by promise
 				'Symbol', // because required by iterator
 				'Iterator', // because required by promise.all
@@ -407,15 +416,21 @@ Object.complete = function(){
 				//'System'
 			].filter(function(requirementName){
 				return false === requirementName in this.global;
-			}, this).map(function(requirementName){
-				return '/requirements/' + requirementName + '.js';
-			}));
+			}, this);
+
+			polyfills.unshift('URI');
+
+			return polyfills;
 		},
 
 		listPlatformRequirements: function(){
-			return this.platform.getRequirements().map(function(requirementName){
-				return '/platforms/' + this.platform.type + '/' + requirementName + '.js';
-			}, this);
+			return this.platform.getRequirements();
+		},
+
+		listRequiredLoaders: function(){
+			return this.useLoaders.map(function(loaderName){
+				return '/loaders/loader-' + loaderName + '.js';
+			});
 		},
 
 		listRequirements: function(){
@@ -428,6 +443,7 @@ Object.complete = function(){
 				'loader',
 				'config'
 			);
+			requirements = requirements.concat(this.listRequiredLoaders());
 			requirements = requirements.concat(this.listPlatformRequirements());
 			requirements.push(
 				'env-storages',
@@ -450,7 +466,11 @@ Object.complete = function(){
 			this.platform.version = this.platform.getVersion();
 			debug('platform type :', this.platform.type, '(', this.platform.name, this.platform.version, ')');
 
-			this.setupLoader();
+			this.loaders = {};
+			this.useLoaders.forEach(function(loaderName){
+				this.loaders[loaderName] = this.createLoader(this.require(loaderName));
+			}, this);
+
 			this.platform.setupStorages();
 			this.platform.init();
 		},
