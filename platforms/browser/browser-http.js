@@ -1,4 +1,4 @@
-jsenv.platform.register('http', function(){
+jsenv.define('http', function(){
 	// https://gist.github.com/mmazer/5404301
 	function parseHeaders(headerString){
 		var headers = {}, pairs, pair, index, i, j, key, value;

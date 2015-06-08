@@ -1,4 +1,4 @@
-jsenv.platform.register('more', {
+jsenv.define('more', {
 	getAgent: function(){
 		var ua = navigator.userAgent.toLowerCase();
 		var regex = /(opera|ie|firefox|chrome|version)[\s\/:]([\w\d\.]+)?.*?(safari|version[\s\/:]([\w\d\.]+)|$)/;

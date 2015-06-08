@@ -153,13 +153,13 @@ Object.complete = function(){
 
 	// requirements
 	var Requirement = Function.create({
-		path: null,
+		location: null,
 		loaded: false,
 		value: undefined,
 
 		constructor: function(options, callback){
 			if( typeof options === 'string' ){
-				options = {path: options};
+				options = {location: options};
 			}
 
 			Object.assign(this, options);
@@ -176,7 +176,7 @@ Object.complete = function(){
 		},
 
 		onReject: function(error){
-			throw new Error('An error occured during requirement loading at ' + this.path + '\n' + error);
+			throw new Error('An error occured during requirement loading at ' + this.location + '\n' + error);
 		}
 	});
 
@@ -192,6 +192,22 @@ Object.complete = function(){
 		global: null,
 		baseURI: null,
 		baseURL: './', // relative to baseURI
+
+		aliases: {
+			// platform
+			'http': '/platforms/{platform}/{platform}-http.js',
+			'storages': '/platforms/{platform}/{platform}-storages.js',
+			'more': '/platforms/{platform}/{platform}-more.js',
+			// env
+			'module': '/lib/module.js',
+			'es6-loader': '/lib/es6-loader.js',
+			'loader': '/lib/loader.js',
+			'config': '/lib/config.js',
+			'env-storages': '/lib/storages.js',
+			'env-global': '/lib/global.env.js',
+			// project
+			'env-project': './project.env.js'
+		},
 
 		createPlatform: function(type, options){
 			return new Platform(this, type, options);
@@ -218,49 +234,76 @@ Object.complete = function(){
 		requirementIndex: -1,
 		requirementLoadIndex: 0,
 
-		has: function(requirementPath){
+		has: function(requirementLocation){
 			var i = this.requirements.length;
-			while(i-- && this.requirements[i].path !== requirementPath);
+			while(i-- && this.requirements[i].path !== requirementLocation);
 			this.requirementIndex = i;
 			return i !== -1;
 		},
 
-		get: function(requirementPath){
+		get: function(requirementLocation){
 			var requirement;
 
-			if( this.has(requirementPath) ){
+			if( this.has(requirementLocation) ){
 				requirement = this.requirements[this.requirementIndex];
 			}
 
 			return requirement;
 		},
 
-		createRequirement: function(requirementPath, onload){
-			return new Requirement(requirementPath, onload);
+		createRequirement: function(requirementLocation, onload){
+			return new Requirement(requirementLocation, onload);
 		},
 
-		define: function(requirementPath, value){
-			var requirement = this.get(requirementPath);
+		locate: function(requirementName){
+			var requirementPath;
+
+			if( requirementName in this.aliases ){
+				requirementPath = this.aliases[requirementName];
+			}
+			else{
+				requirementPath = requirementName;
+			}
+
+			return requirementPath;
+		},
+
+		define: function(requirementName, value){
+			var requirementLocation = this.locate(requirementName);
+			var requirement = this.get(requirementLocation);
 
 			if( requirement ){
 				requirement.loaded = true;
 				requirement.value = value;
 			}
 			else{
-				requirement = this.need(requirementPath);
+				requirement = this.need(requirementLocation);
 				requirement.loaded = true;
 				requirement.value = value;
 			}
 		},
 
-		need: function(requirementPath, onload){
-			var requirement = this.get(requirementPath);
+		require: function(requirementName){
+			var requirementLocation = this.locate(requirementName);
+			var requirement = this.get(requirementLocation);
+
+			if( requirement ){
+				return requirement.value;
+			}
+			else{
+				throw new Error('requirement' + requirementName + 'not found');
+			}
+		},
+
+		need: function(requirementName, onload){
+			var requirementLocation = this.locate(requirementName);
+			var requirement = this.get(requirementLocation);
 
 			if( requirement ){
 				requirement.onload = onload;
 			}
 			else{
-				requirement = this.createRequirement(requirementPath, onload);
+				requirement = this.createRequirement(requirementLocation, onload);
 
 				if( this.state == 'created' ){
 					this.requirements.push(requirement);
@@ -279,7 +322,7 @@ Object.complete = function(){
 		loadRequirements: function(){
 			this.state = 'loading';
 
-			var self = this, requirements = this.requirements, requirement;
+			var self = this, requirements = this.requirements, requirement, location;
 
 			self.requirementLoadIndex = 0;
 
@@ -289,13 +332,19 @@ Object.complete = function(){
 					nextRequirement();
 				}
 				else{
-					var url = requirement.path;
-					// / means relative to the jsenv dirname here, not the env root
-					if( url[0] === '/' ) url = self.platform.dirname + url;
-					else if( url.slice(0, 2) === './' ) url = self.baseURI + url.slice(2);
+					location = requirement.location;
+					location = location.replace(/{platform}/g, self.platform.type);
 
-					debug('REQUIRE', url);
-					self.platform.load(url, onRequirementLoad);
+					// / means relative to the jsenv dirname here, not the env root
+					if( location[0] === '/' ){
+						location = self.platform.dirname + location;
+					}
+					else if( location.slice(0, 2) === './' ){
+						location = self.baseURI + location.slice(2);
+					}
+
+					debug('REQUIRE', location);
+					self.platform.load(location, onRequirementLoad);
 				}
 			}
 
@@ -346,8 +395,11 @@ Object.complete = function(){
 		},
 
 		listEnvRequirements: function(){
-			return [
-				'URI',
+			var requirements = [
+				'URI'
+			];
+
+			return requirements.concat([
 				'setImmediate', // because required by promise
 				'Symbol', // because required by iterator
 				'Iterator', // because required by promise.all
@@ -357,7 +409,7 @@ Object.complete = function(){
 				return false === requirementName in this.global;
 			}, this).map(function(requirementName){
 				return '/requirements/' + requirementName + '.js';
-			});
+			}));
 		},
 
 		listPlatformRequirements: function(){
@@ -371,14 +423,16 @@ Object.complete = function(){
 
 			requirements = requirements.concat(this.listEnvRequirements());
 			requirements.push(
-				'/lib/loader.js',
-				'/lib/config.js'
+				'module',
+				'es6-loader',
+				'loader',
+				'config'
 			);
 			requirements = requirements.concat(this.listPlatformRequirements());
 			requirements.push(
-				'/lib/storages.js',
-				'/lib/global.env.js',
-				'./project.env.js'
+				'env-storages',
+				'env-global',
+				'env-project'
 			);
 
 			return requirements;

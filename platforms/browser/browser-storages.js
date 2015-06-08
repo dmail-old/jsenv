@@ -1,4 +1,4 @@
-jsenv.platform.register('storages.js', {
+jsenv.define('storages', {
 	file: {
 		get: function(request){
 			request.then = function(response){

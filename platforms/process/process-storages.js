@@ -51,7 +51,7 @@ function createGetter(url, options){
 	});
 }
 
-jsenv.platform.register('storages', {
+jsenv.define('storages', {
 	file: {
 		get: function(url, options){
 			return createGetter(url, options);

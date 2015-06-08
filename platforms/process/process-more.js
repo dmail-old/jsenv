@@ -1,4 +1,4 @@
-jsenv.platform.register('more', {
+jsenv.define('more', {
 	getName: function(){
 		return 'node';
 	},

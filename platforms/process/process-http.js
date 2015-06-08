@@ -1,4 +1,4 @@
-jsenv.platform.register('http', function(){
+jsenv.define('http', function(){
 	var http = require('http');
 	var https = require('https');
 	var parse = require('url').parse;
