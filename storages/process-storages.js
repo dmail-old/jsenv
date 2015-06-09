@@ -9,7 +9,7 @@ function writeFile(file, content){
 	return filesystem('writeFile', file, content);
 }
 
-jsenv.define('storages', {
+jsenv.define('platform-storages', {
 	file: {
 		get: function(request){
 			var url = String(request.url).slice('file://'.length);

@@ -1,4 +1,4 @@
-jsenv.define('http', function(){
+jsenv.define('platform-http', function(){
 	var http = require('http');
 	var https = require('https');
 	var parse = require('url').parse;

@@ -1,4 +1,4 @@
-jsenv.define('storages', {
+jsenv.define('platform-storages', {
 	file: {
 		read: function(url, options){
 			return this.env.findStorage('http').read(url, options).then(function(response){
