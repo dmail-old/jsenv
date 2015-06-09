@@ -24,14 +24,16 @@ With browser
 
 >In Firefox this requires navigating to about:config, entering security.fileuri.strict_origin_policy in the filter box and toggling the option to false.
 
-## Source location
+## Include examples
 
-You can include Javascript sources from different locations, the following include examples are valid.
+The following include examples are valid.
 
 ```javascript
 include('foo');
 include('./foo');
 include('../../foo');
+include('/foo');
+include('//foo');
 include('file:///C:/modules/foo');
 include('http://my-domain.com/modules/foo');
 include('https://external-domain.com/modules/foo');
@@ -63,9 +65,9 @@ ENV.load('a').then(function(){
 });
 ```
 
-## ENV
+## jsenv
 
-This script installs a global variable called ENV
+This script installs a global variable called `jsenv`
 
 ## global
 
