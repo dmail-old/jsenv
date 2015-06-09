@@ -460,7 +460,6 @@ Object.complete = function(){
 			setTimeout(this.loadRequirements.bind(this), 0);
 		},
 
-		mode: undefined, // 'install', 'update', 'run'
 		onload: function(){ // called when requirements are loaded
 			this.platform.name = this.platform.getName();
 			this.platform.version = this.platform.getVersion();
@@ -475,10 +474,11 @@ Object.complete = function(){
 			this.platform.init();
 		},
 
+		mode: undefined, // 'install', 'update', 'run'
 		// called when jsenv is ready
 		init: function(){
 			if( this.mainModule ){
-				var main = this.main = this.loader.createModule(
+				var main = this.main = this.loaders.js.createModule(
 					/*this.loader.normalize(*/this.mainModule//)
 				);
 
