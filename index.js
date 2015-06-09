@@ -140,9 +140,8 @@ Object.complete = function(){
 
 		getRequirements: function(){
 			return [
-				'more',
-				'http',
-				'storages'
+				'platform-http',
+				'platform-storages'
 			];
 		},
 
@@ -182,9 +181,7 @@ Object.complete = function(){
 
 	var jsenv = {
 		state: 'created',
-	};
 
-	Object.assign(jsenv, {
 		// platforms
 		platforms: [],
 		platform: null,
@@ -206,19 +203,18 @@ Object.complete = function(){
 			'es6-loader': '/lib/es6-loader.js',
 			'loader': '/lib/loader.js',
 			'config': '/lib/config.js',
+			'storages': '/lib/storages.js',
 
 			// loaders
 			'loader-js': '/loaders/loader-js.js',
 			'loader-css': '/loaders/loader-css.js',
 
 			// platform
-			'http': '/platforms/{platform}/{platform}-http.js',
-			'storages': '/platforms/{platform}/{platform}-storages.js',
-			'more': '/platforms/{platform}/{platform}-more.js',
+			'platform-http': '/storages/{platform}-http.js',
+			'platform-storages': '/storages/{platform}-storages.js',
 
-			'env-storages': '/lib/storages.js',
-			'env-global': '/lib/global.env.js',
-			// project
+			// config
+			'env-global': '/global.env.js',
 			'env-project': './project.env.js'
 		},
 
@@ -441,12 +437,12 @@ Object.complete = function(){
 				'module',
 				'es6-loader',
 				'loader',
-				'config'
+				'config',
+				'storages'
 			);
 			requirements = requirements.concat(this.listRequiredLoaders());
 			requirements = requirements.concat(this.listPlatformRequirements());
 			requirements.push(
-				'env-storages',
 				'env-global',
 				'env-project'
 			);
@@ -498,9 +494,9 @@ Object.complete = function(){
 				});
 			}
 		}
-	});
+	};
 
-	var browserPlatform = jsenv.createPlatform('browser', {
+	var browserPlatform = {
 		is: function(){
 			return typeof window !== 'undefined';
 		},
@@ -534,11 +530,74 @@ Object.complete = function(){
 			};
 
 			document.head.appendChild(script);
-		}
-	});
-	jsenv.platforms.push(browserPlatform);
+		},
 
-	var processPlatform = jsenv.createPlatform('process', {
+		getAgent: function(){
+			var ua = navigator.userAgent.toLowerCase();
+			var regex = /(opera|ie|firefox|chrome|version)[\s\/:]([\w\d\.]+)?.*?(safari|version[\s\/:]([\w\d\.]+)|$)/;
+			var UA = ua.match(regex) || [null, 'unknown', 0];
+			var name = UA[1] == 'version' ? UA[3] : UA[1];
+			var version;
+
+			// version
+			if( UA[1] == 'ie' && document.documentMode ) version = document.documentMode;
+			else if( UA[1] == 'opera' && UA[4] ) version = parseFloat(UA[4]);
+			else version = parseFloat(UA[2]);
+
+			return {
+				name: name,
+				version: version
+			};
+		},
+
+		getName: function(){
+			return this.getAgent().name;
+		},
+
+		getVersion: function(){
+			return this.getAgent().version;
+		},
+
+		getOs: function(){
+			return navigator.platform.toLowerCase();
+		},
+
+		init: function(){
+			function ready(){
+				var scripts = document.getElementsByTagName('script'), i = 0, j = scripts.length, script;
+				for(;i<j;i++){
+					script = scripts[i];
+					if( script.type === 'module' ){
+						jsenv.loader.module(script.innerHTML.slice(1)).catch(function(error){
+							setImmediate(function(){ throw error; });
+						});
+					}
+				}
+
+				jsenv.init();
+			}
+
+			function completed(){
+				document.removeEventListener('DOMContentLoaded', completed);
+				window.removeEventListener('load', completed);
+				ready();
+			}
+
+			if( document.readyState === 'complete' ){
+				setTimeout(ready);
+			}
+			else if( document.addEventListener ){
+				document.addEventListener('DOMContentLoaded', completed);
+				window.addEventListener('load', completed);
+			}
+		},
+
+		restart: function(){
+			window.location.reload(true);
+		}
+	};
+
+	var processPlatform = {
 		is: function(){
 			return typeof process !== 'undefined';
 		},
@@ -583,9 +642,43 @@ Object.complete = function(){
 			}
 
 			done(error);
+		},
+
+		getName: function(){
+			return 'node';
+		},
+
+		getVersion: function(){
+			return process.version;
+		},
+
+		getOs: function(){
+			// https://nodejs.org/api/process.html#process_process_platform
+			// 'darwin', 'freebsd', 'linux', 'sunos', 'win32'
+			var platform = process.platform;
+			if( platform === 'win32' ) platform = 'windows';
+			return platform;
+		},
+
+		init: function(){
+			if( require.main === module ){
+				throw new Error('jsenv must be required');
+			}
+
+			if( !this.mode ){
+				this.mode = process.env.JSENV_MODE;
+			}
+
+			this.env.init();
+		},
+
+		restart: function(){
+			process.exit(2);
 		}
-	});
-	jsenv.platforms.push(processPlatform);
+	};
+
+	jsenv.platforms.push(jsenv.createPlatform('browser', browserPlatform));
+	jsenv.platforms.push(jsenv.createPlatform('process', processPlatform));
 
 	jsenv.setup();
 })();
