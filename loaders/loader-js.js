@@ -1,6 +1,5 @@
 jsenv.define('loader-js', {
 	extension: '.js',
-	baseURL: new URI(this.baseURL, this.baseURI),
 
 	collectDependencies: (function(){
 		// https://github.com/jonschlinkert/strip-comments/blob/master/index.js

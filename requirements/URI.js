@@ -3,6 +3,7 @@
 	// https://github.com/Polymer/URL/blob/master/url.js
 	function parseURI(url){
 		if( typeof url === 'object' ) return url;
+		if( url == null ) throw new TypeError(url + 'is not a valid url');
 
 		url = String(url);
 		url = url.replace(/^\s+|\s+$/g, ''); // trim

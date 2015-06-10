@@ -42,8 +42,13 @@ function debug(){
 	var args = Array.prototype.slice.call(arguments);
 
 	args = args.map(function(arg){
-		if( arg && typeof arg == 'object' && 'name' in arg ){
-			arg = arg.name ? String(arg.name) : 'anonymous module';
+		if( arg && typeof arg == 'object'){
+			if( 'name' in arg ){
+				arg = arg.name ? String(arg.name) : 'anonymous module';
+			}
+			else{
+				arg = String(arg);
+			}
 		}
 		return arg;
 	});
@@ -64,10 +69,10 @@ Function.extend = function(constructor, proto){
 };
 
 function mapProperties(args, fn){
-	var object = args[0], i = 1, j = arguments.length, owner, keys, n, m;
+	var object = args[0], i = 1, j = args.length, owner, keys, n, m;
 
 	for(;i<j;i++){
-		owner = arguments[i];
+		owner = args[i];
 		if( Object(owner) != owner ) continue;
 		keys = Object.keys(owner);
 		n = 0;
@@ -77,11 +82,13 @@ function mapProperties(args, fn){
 			fn(object, keys[n], owner);
 		}
 	}
+
+	return object;
 }
 
 if( !Object.assign ){
 	Object.assign = function(){
-		mapProperties(arguments, function(object, key, owner){
+		return mapProperties(arguments, function(object, key, owner){
 			object[key] = owner[key];
 		});
 	};
@@ -109,6 +116,7 @@ Object.complete = function(){
 		constructor: function(env, type, options){
 			this.env = env;
 			this.type = String(type);
+
 			if( options ){
 				Object.assign(this, options);
 			}
@@ -162,20 +170,27 @@ Object.complete = function(){
 			}
 
 			Object.assign(this, options);
-			if( callback ) this.onload = callback;
+
+			if( callback != null ){
+				if( typeof callback != 'function' ){
+					throw new TypeError('callback must be a function, ' + typeof callback + ' given');
+				}
+				this.onload = callback;
+			}
 		},
 
 		onload: function(){
 
 		},
 
-		onResolve: function(){
+		complete: function(){
 			this.loaded = true;
 			this.onload(this.value);
 		},
 
-		onReject: function(error){
-			throw new Error('An error occured during requirement loading at ' + this.location + '\n' + error);
+		fail: function(error){
+			throw error;
+			//new Error('An error occured during requirement loading at ' + this.location + '\n' + error);
 		}
 	});
 
@@ -203,15 +218,15 @@ Object.complete = function(){
 			'es6-loader': '/lib/es6-loader.js',
 			'loader': '/lib/loader.js',
 			'config': '/lib/config.js',
-			'storages': '/lib/storages.js',
+			'store': '/lib/store.js',
 
 			// loaders
 			'loader-js': '/loaders/loader-js.js',
 			'loader-css': '/loaders/loader-css.js',
 
 			// platform
-			'platform-http': '/storages/{platform}-http.js',
-			'platform-storages': '/storages/{platform}-storages.js',
+			'platform-http': '/storages/http-{platform}.js',
+			'platform-storages': '/storages/storages-{platform}.js',
 
 			// config
 			'env-global': '/global.env.js',
@@ -245,7 +260,7 @@ Object.complete = function(){
 
 		has: function(requirementLocation){
 			var i = this.requirements.length;
-			while(i-- && this.requirements[i].path !== requirementLocation);
+			while(i-- && this.requirements[i].location !== requirementLocation);
 			this.requirementIndex = i;
 			return i !== -1;
 		},
@@ -289,6 +304,7 @@ Object.complete = function(){
 				requirement = this.need(requirementLocation);
 				requirement.loaded = true;
 				requirement.value = value;
+				this.requirements.push(requirement);
 			}
 		},
 
@@ -300,19 +316,19 @@ Object.complete = function(){
 				return requirement.value;
 			}
 			else{
-				throw new Error('requirement' + requirementName + 'not found');
+				throw new Error('requirement ' + requirementLocation + ' not found');
 			}
 		},
 
-		need: function(requirementName, onload){
+		need: function(requirementName){
 			var requirementLocation = this.locate(requirementName);
 			var requirement = this.get(requirementLocation);
 
 			if( requirement ){
-				requirement.onload = onload;
+				//requirement.onload = onload;
 			}
 			else{
-				requirement = this.createRequirement(requirementLocation, onload);
+				requirement = this.createRequirement(requirementLocation);
 
 				if( this.state == 'created' ){
 					this.requirements.push(requirement);
@@ -359,10 +375,10 @@ Object.complete = function(){
 
 			function onRequirementLoad(error){
 				if( error ){
-					requirement.onReject(error);
+					requirement.fail(error);
 				}
 				else{
-					requirement.onResolve();
+					requirement.complete();
 					//debug('REQUIRED', requirement.path);
 					nextRequirement();
 				}
@@ -405,6 +421,7 @@ Object.complete = function(){
 
 		listEnvRequirements: function(){
 			var polyfills = [
+				'URI',
 				'setImmediate', // because required by promise
 				'Symbol', // because required by iterator
 				'Iterator', // because required by promise.all
@@ -414,19 +431,11 @@ Object.complete = function(){
 				return false === requirementName in this.global;
 			}, this);
 
-			polyfills.unshift('URI');
-
 			return polyfills;
 		},
 
 		listPlatformRequirements: function(){
 			return this.platform.getRequirements();
-		},
-
-		listRequiredLoaders: function(){
-			return this.useLoaders.map(function(loaderName){
-				return '/loaders/loader-' + loaderName + '.js';
-			});
 		},
 
 		listRequirements: function(){
@@ -438,9 +447,9 @@ Object.complete = function(){
 				'es6-loader',
 				'loader',
 				'config',
-				'storages'
+				'store'
 			);
-			requirements = requirements.concat(this.listRequiredLoaders());
+			//requirements = requirements.concat(this.listRequiredLoaders());
 			requirements = requirements.concat(this.listPlatformRequirements());
 			requirements.push(
 				'env-global',
@@ -461,30 +470,24 @@ Object.complete = function(){
 			this.platform.version = this.platform.getVersion();
 			debug('platform type :', this.platform.type, '(', this.platform.name, this.platform.version, ')');
 
-			this.loaders = {};
-			this.useLoaders.forEach(function(loaderName){
-				this.loaders[loaderName] = this.createLoader(this.require(loaderName));
-			}, this);
-
-			this.platform.setupStorages();
+			this.loader.setup();
+			this.store.setup();
 			this.platform.init();
 		},
 
-		mode: undefined, // 'install', 'update', 'run'
 		// called when jsenv is ready
 		init: function(){
 			if( this.mainModule ){
-				var main = this.main = this.loaders.js.createModule(
+				// idéalement on fera loader.createModule('modulename') qui se charge ensuite d'apeller le bon loader
+				// pour ce fichier
+				var main = this.main = this.loader.loaders.js.createModule(
 					/*this.loader.normalize(*/this.mainModule//)
 				);
 
-				if( !this.mode ){
-					throw new Error('jsenv mode not set');
-				}
-
-				debug(this.mode, 'main module', this.mainModule);
+				debug('main module', this.mainModule);
 
 				main.then(function(){
+					console.log('parsing main');
 					main.parse();
 					main.execute();
 				}).catch(function(error){

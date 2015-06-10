@@ -1,4 +1,6 @@
 jsenv.define('platform-storages', {
+	http: jsenv.createHttpStorage(),
+	https: jsenv.createHttpsStorage(),
 	file: {
 		read: function(url, options){
 			return this.env.findStorage('http').read(url, options).then(function(response){
