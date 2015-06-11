@@ -89,6 +89,6 @@ function createGithubSetter(){
 
 // TODO https://developer.github.com/v3/#http-redirects
 module.exports = {
-	get: createGithubGetter(),
-	set: createGithubSetter()
+	createGetRequest: createGithubGetter(),
+	createSetRequest: createGithubSetter()
 };

@@ -18,7 +18,7 @@ function getRequestUrl(request){
 }
 
 module.exports = {
-	get: function(request){
+	createGetPromise: function(request){
 		var url = getRequestUrl(request);
 
 		return readFile(url).then(function(content){
@@ -60,7 +60,7 @@ module.exports = {
 		});
 	},
 
-	set: function(request){
+	createSetPromise: function(request){
 		var url = getRequestUrl(request);
 		var body = request.body;
 
