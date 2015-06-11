@@ -153,6 +153,10 @@ Object.complete = function(){
 			];
 		},
 
+		setup: function(){
+
+		},
+
 		init: function(){
 			this.env.init();
 		}
@@ -470,6 +474,7 @@ Object.complete = function(){
 			this.platform.version = this.platform.getVersion();
 			debug('platform type :', this.platform.type, '(', this.platform.name, this.platform.version, ')');
 
+			this.platform.setup();
 			this.loader.setup();
 			this.store.setup();
 			this.platform.init();
@@ -661,6 +666,39 @@ Object.complete = function(){
 			var platform = process.platform;
 			if( platform === 'win32' ) platform = 'windows';
 			return platform;
+		},
+
+		setup: function(){
+			var cloneRepo = require('./utils/clone-github');
+			var symlink = require('./utils/symlink');
+
+			var loaderProto = this.env.loader.Loader.prototype;
+			var install = loaderProto.install;
+
+			loaderProto.install = function(module, promise){
+				var self = this, gitclone = module.meta.gitclone;
+
+				function getLocation(location){
+					return String(self.resolveURL(location)).slice('file://'.length);
+				}
+
+				if( gitclone ){
+					return promise.then(function(){
+						var to = getLocation(gitclone.to);
+
+						return cloneRepo(gitclone.from, to).then(function(){
+							if( gitclone.link ){
+								return symlink(to, getLocation(gitclone.link));
+							}
+						}).then(function(){
+							console.log('refetching', module.name);
+							return self.createResponsePromise(module);
+						});
+					});
+				}
+
+				return install.call(this, module, promise);
+			};
 		},
 
 		init: function(){
