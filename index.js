@@ -95,7 +95,7 @@ if( !Object.assign ){
 }
 
 Object.complete = function(){
-	mapProperties(arguments, function(object, key, owner){
+	return mapProperties(arguments, function(object, key, owner){
 		if( key in object ){
 			var current = object[key], value = owner[key];
 			if( typeof current === 'object' && typeof value === 'object' ){
