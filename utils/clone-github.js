@@ -4,11 +4,6 @@ var path = require('path');
 var child_process = require('child_process');
 
 function cloneRepository(url, directory){
-	if( fs.existsSync(directory) ){
-		console.log(directory, 'already cloned');
-		return Promise.resolve();
-	}
-
 	directory = path.dirname(directory);
 	console.log('git clone', url, 'into', directory);
 
@@ -25,10 +20,6 @@ module.exports = function(repositoryURL, directory){
 
 	return mkdirto(directory).then(function(){
 		return cloneRepository(repositoryURL, directory);
-	}).catch(function(error){
-		setImmediate(function(){
-			throw error;
-		});
 	});
 };
 

@@ -1,28 +1,15 @@
 var filesystem = require('./filesystem');
-
-function hasDirectory(dir){
-	return filesystem('stat', dir).then(function(stat){
-		return stat.isDirectory();
-	}).catch(function(error){
-		if( error && error.code == 'ENOENT' ) return false;
-		return Promise.reject(error);
-	});
-}
-
-function hasFile(file){
-	return filesystem('stat', file).then(function(stat){
-		return stat.isFile();
-	}).catch(function(error){
-		if( error && error.code == 'ENOENT' ) return false;
-		return Promise.reject(error);
-	});
-}
+var hasdir = require('./has-dir');
 
 function createDirectory(dir){
-	return hasDirectory(dir).then(function(has){
+	return hasdir(dir).then(function(has){
 		if( has ) return;
+
 		console.log('create directory', dir);
-		return filesystem('mkdir', dir);
+		return filesystem('mkdir', dir).catch(function(error){
+			if( error && error.code === 'EEXIST' ) return;
+			return Promise.reject(error);
+		});
 	});
 }
 

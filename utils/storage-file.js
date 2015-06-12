@@ -37,14 +37,13 @@ module.exports = {
 			});
 		}).catch(function(error){
 			if( error ){
-				if( error.code == 'ENOENT' ){
-					return {
-						status: 404
-					};
-				}
-				// file access may be temporarily blocked, for instance by an antivirus scanning it
-				// because it was recently modified
-				if( error.code === 'EBUSY' ){
+				if( error.code == 'ENOENT' ) return 404;
+				// https://iojs.org/api/errors.html#errors_eacces_permission_denied
+				if( error.code === 'EACCES' ) return 403;
+				if( error.code === 'EPERM' ) return 403;
+				// file access may be temporarily blocked (by an antivirus scanning it because recently modified for instance)
+				// emfile means there is too many files currently opened
+				if( error.code === 'EBUSY' || error.code === 'EMFILE' ){
 					return {
 						status: 503, // unavailable
 						headers: {
@@ -52,11 +51,14 @@ module.exports = {
 						}
 					};
 				}
+
+				return {
+					status: 500,
+					body: error
+				};
 			}
-			return {
-				status: 500,
-				body: error
-			};
+
+			return 500;
 		});
 	},
 

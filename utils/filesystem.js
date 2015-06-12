@@ -6,7 +6,8 @@ function filesystem(method){
 	return new Promise(function(resolve, reject){
 		args.push(function(error, result){
 			if( error ){
-				reject(error);
+				if( error instanceof Error ) reject(error);
+				else resolve(error);
 			}
 			else{
 				resolve(result);
