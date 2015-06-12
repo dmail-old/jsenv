@@ -19,29 +19,27 @@ xhr.setRequestHeader('accept', 'application/vnd.github.v3.raw');
 xhr.setRequestHeader('if-modified-since', date.toUTCString());
 xhr.send(null);
 */
-function createGithubGetter(){
-	return function(request){
-		var url = request.url;
-		var parsed = new URI(url);
-		var giturl = replace('https://api.github.com/repos/{user}/{repo}/contents/{path}?ref={version}', {
-			user: parsed.username,
-			repo: parsed.host,
-			path: parsed.pathname ? parsed.pathname.slice(1) : 'index.js',
-			version: parsed.hash ? parsed.hash.slice(1) : 'master'
-		});
+function createGithubGetRequest(request){
+	var url = request.url;
+	var parsed = new URI(url);
+	var giturl = replace('https://api.github.com/repos/{user}/{repo}/contents/{path}?ref={version}', {
+		user: parsed.username,
+		repo: parsed.host,
+		path: parsed.pathname ? parsed.pathname.slice(1) : 'index.js',
+		version: parsed.hash ? parsed.hash.slice(1) : 'master'
+	});
 
-		Object.complete(request, {
-			method: 'GET',
-			headers: {
-				'accept': 'application/vnd.github.v3.raw',
-				'User-Agent': 'jsenv' // https://developer.github.com/changes/2013-04-24-user-agent-required/
-			}
-		});
+	Object.complete(request, {
+		method: 'GET',
+		headers: {
+			'accept': 'application/vnd.github.v3.raw',
+			'User-Agent': 'jsenv' // https://developer.github.com/changes/2013-04-24-user-agent-required/
+		}
+	});
 
-		request.url = giturl;
+	request.url = giturl;
 
-		return request;
-	};
+	return request;
 }
 
 /*
@@ -63,31 +61,31 @@ xhr.send(JSON.stringify({
 // http://stackoverflow.com/questions/26203603/how-do-i-get-the-sha-parameter-from-github-api-without-downloading-the-whole-f
 // en mode install il suffit de faire un create file avec PUT
 // en mode update il faut update le fichier avec un PUT mais c'est plus complexe
-function createGithubSetter(){
-	return function(request){
-		var giturl = replace('https://api.github.com/repos/{user}/{repo}/contents/{path}', {
+function createGithubSetRequest(request){
+	var giturl = replace('https://api.github.com/repos/{user}/{repo}/contents/{path}', {
 
-		});
+	});
 
-		Object.complete(request, {
-			method: 'PUT',
-			headers: {
-				'content-type': 'application/json',
-				'User-Agent': 'jsenv'
-			},
-			body: JSON.stringify({
-				message: 'update ' + giturl.pathname,
-				content: Base64.encode(request.body)
-			})
-		});
+	Object.complete(request, {
+		method: 'PUT',
+		headers: {
+			'content-type': 'application/json',
+			'User-Agent': 'jsenv'
+		},
+		body: JSON.stringify({
+			message: 'update ' + giturl.pathname,
+			content: Base64.encode(request.body)
+		})
+	});
 
-		request.url = giturl;
+	request.url = giturl;
 
-		return request;
-	};
+	return request;
 }
 
 module.exports = {
-	createGetRequest: createGithubGetter(),
-	createSetRequest: createGithubSetter()
+	createGetRequest: createGithubGetRequest,
+	createSetRequest: createGithubSetRequest,
+	createGetPromise: function(request){ return this.store.createHttpRequest(request); },
+	// createSetPromise: function(request){ return this.store.createHttpRequest(request); }
 };

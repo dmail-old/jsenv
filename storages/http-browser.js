@@ -22,11 +22,11 @@ jsenv.define('platform-http', function(){
 	}
 
 
-	function createRequest(url, options){
+	function createRequest(options){
 		return new Promise(function(resolve, reject){
 			var xhr = new XMLHttpRequest();
 
-			xhr.open(options.method, url);
+			xhr.open(options.method, options.url);
 			if( options.headers ){
 				for(var key in options.headers){
 					xhr.setRequestHeader(key, options.headers[key]);

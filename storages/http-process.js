@@ -3,7 +3,8 @@ jsenv.define('platform-http', function(){
 	var https = require('https');
 	var parse = require('url').parse;
 
-	function createRequest(url, options){
+	function createRequest(options){
+		var url = options.url;
 		var parsed = parse(url), secure;
 
 		Object.assign(options, parsed);
@@ -14,8 +15,6 @@ jsenv.define('platform-http', function(){
 
 		return new Promise(function(resolve, reject){
 			var httpRequest = (secure ? https : http).request(options);
-
-			console.log(options.method, url);
 
 			function resolveWithHttpResponse(httpResponse){
 				var buffers = [], length = 0;

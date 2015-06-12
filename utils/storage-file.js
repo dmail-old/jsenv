@@ -67,7 +67,12 @@ module.exports = {
 		var body = request.body;
 
 		return mkdirto(url).then(function(){
-			return writeFile(url, body);
+			console.log('writing file', url);
+
+			return writeFile(url, body).then(function(){
+				console.log('file was correctly written');
+				return 200;
+			});
 		});
 	}
 };
