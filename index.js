@@ -667,13 +667,13 @@ Object.complete = function(){
 			return platform;
 		},
 
+		setup: function(){
+
+		},
+
 		init: function(){
 			if( require.main === module ){
 				throw new Error('jsenv must be required');
-			}
-
-			if( !this.mode ){
-				this.mode = process.env.JSENV_MODE;
 			}
 
 			this.env.init();

@@ -16,6 +16,7 @@ function symlink(source, destination){
 		if( stat.isSymbolicLink() ){
 			return filesystem('readlink', destination).then(function(link){
 				if( link[link.length -1] == '\\' || link[link.length -1] == '/' ) link = link.slice(0, -1);
+				if( link.indexOf('\\') !== -1 ) link = link.replace(/\\/g, '/');
 
 				if( link != source ){
 					debug('remove previous link to', link, 'because new link is', source);
