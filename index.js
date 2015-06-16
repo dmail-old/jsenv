@@ -233,8 +233,8 @@ Object.complete = function(){
 			'platform-storages': '/storages/storages-{platform}.js',
 
 			// config
-			'env-global': '/global.env.js',
-			'env-project': './project.env.js'
+			'config-global': '/config-global.js',
+			'config-project': './config-project.js'
 		},
 
 		createPlatform: function(type, options){
