@@ -230,11 +230,7 @@ Object.complete = function(){
 
 			// platform
 			'platform-http': '/storages/http-{platform}.js',
-			'platform-storages': '/storages/storages-{platform}.js',
-
-			// config
-			'config-global': '/config-global.js',
-			'config-project': './config-project.js'
+			'platform-storages': '/storages/storages-{platform}.js'
 		},
 
 		createPlatform: function(type, options){
@@ -372,7 +368,7 @@ Object.complete = function(){
 						location = self.baseURI + location.slice(2);
 					}
 
-					debug('REQUIRE', location);
+					debug('REQUIRE', requirement.location);
 					self.platform.load(location, onRequirementLoad);
 				}
 			}
@@ -455,10 +451,6 @@ Object.complete = function(){
 			);
 			//requirements = requirements.concat(this.listRequiredLoaders());
 			requirements = requirements.concat(this.listPlatformRequirements());
-			requirements.push(
-				'env-global',
-				'env-project'
-			);
 
 			return requirements;
 		},
@@ -667,16 +659,12 @@ Object.complete = function(){
 			return platform;
 		},
 
-		setup: function(){
-
-		},
-
 		init: function(){
 			if( require.main === module ){
 				throw new Error('jsenv must be required');
 			}
 
-			this.env.init();
+			jsenv.init();
 		},
 
 		restart: function(){
