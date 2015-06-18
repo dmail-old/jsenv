@@ -3,51 +3,55 @@ jsenv.define('platform-http', function(){
 	var https = require('https');
 	var parse = require('url').parse;
 
-	function createRequest(options){
+	function createResponse(options){
 		var url = options.url;
 		var parsed = parse(url), secure;
-
 		Object.assign(options, parsed);
-
 		secure = options.protocol === 'https:';
-
 		options.port = secure ? 443 : 80;
 
-		return new Promise(function(resolve, reject){
-			var httpRequest = (secure ? https : http).request(options);
+		var request = (secure ? https : http).request(options), response = jsenv.store.createHttpResponse();
 
-			function resolveWithHttpResponse(httpResponse){
-				var buffers = [], length = 0;
-				httpResponse.addListener('data', function(chunk){
-					buffers.push(chunk);
-					length+= chunk.length;
-				});
-				httpResponse.addListener('end', function(){
-					resolve({
-						status: httpResponse.statusCode,
-						headers: httpResponse.headers,
-						body: Buffer.concat(buffers, length).toString()
-					});
-				});
-				httpResponse.addListener('error', reject);
-			}
+		request.on('error', function(e){
+			response.onerror(e);
+		});
+		request.on('timeout', function(){
+			request.close();
+			response.ontimeout();
+		});
 
-			httpRequest.addListener('response', resolveWithHttpResponse);
-			httpRequest.addListener('error', reject);
-			httpRequest.addListener('timeout', reject);
-			httpRequest.addListener('close', reject);
+		request.on('response', function(httpResponse){
+			response.open(httpResponse.statusCode, httpResponse.headers);
 
+			httpResponse.on('data', function(chunk){
+				response.write(chunk);
+			});
+			httpResponse.on('end', function(error){
+				response.body = Buffer.concat(response.buffers, response.length);
+				response.close();
+			});
+			httpResponse.on('error', function(error){
+				response.error(error);
+			});
+		});
+
+		response.setTimeout = function(timeout){
+			request.setTimeout(timeout);
+		};
+		response.send = function(){
 			if( options.body ){
-				httpRequest.write(options.body);
+				request.write(options.body);
 			}
 			else{
-				httpRequest.end();
+				request.end();
 			}
+		};
+		response.abort = function(){
+			request.abort();
+		};
 
-			// timeout
-			setTimeout(function(){ reject(new Error("Timeout")); }, 20000);
-		});
+		return response;
 	}
 
-	return createRequest;
+	return createResponse;
 });

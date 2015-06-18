@@ -21,31 +21,61 @@ jsenv.define('platform-http', function(){
 		return headers;
 	}
 
+	function createResponse(options){
+		var request = new XMLHttpRequest(), response = jsenv.store.createHttpResponse();
 
-	function createRequest(options){
-		return new Promise(function(resolve, reject){
-			var xhr = new XMLHttpRequest();
+		try{
+			request.open(options.method, options.url);
 
-			xhr.open(options.method, options.url);
 			if( options.headers ){
 				for(var key in options.headers){
-					xhr.setRequestHeader(key, options.headers[key]);
+					request.setRequestHeader(key, options.headers[key]);
 				}
 			}
 
-			xhr.onerror = reject;
-			xhr.onreadystatechange = function(){
-				if( xhr.readyState === 4 ){
-					resolve({
-						status: xhr.status,
-						body: xhr.responseText,
-						headers: parseHeaders(xhr.getAllResponseHeaders())
-					});
+			//request.overrideMimeType('text\/plain; charset=x-user-defined');
+			//request.responseType = 'arraybuffer';
+
+			request.onerror = function(e){
+				response.onerror(e);
+			};
+			request.ontimeout = function(){
+				response.ontimeout();
+			};
+			var offset = 0;
+			request.onreadystatechange = function(){
+				if( request.readyState === 2 ){
+					response.open(request.status, parseHeaders(request.getAllResponseHeaders()));
+				}
+				else if( request.readyState === 3 ){
+					var data = request.repsonseText;
+
+					if( offset ) data = data.slice(offset);
+					offset+= data.length;
+
+					response.write(data);
+				}
+				else if( request.readyState === 4 ){
+					response.body = request.responseText;
+					response.close();
 				}
 			};
-			xhr.send(options.body || null);
-		});
+			response.setTimeout = function(timeout){
+				request.timeout = timeout;
+			};
+			response.send = function(){
+				request.send(options.body || null);
+			};
+			response.abort = function(){
+				request.abort();
+			};
+		}
+		catch(e){
+			response.onerror(e);
+		}
+
+		return response;
 	}
 
-	return createRequest;
+	return createResponse;
 });
