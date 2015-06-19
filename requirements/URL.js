@@ -1,7 +1,7 @@
 (function(global){
 	// https://gist.github.com/Yaffle/1088850
 	// https://github.com/Polymer/URL/blob/master/url.js
-	function parseURI(url){
+	function parseURL(url){
 		if( typeof url === 'object' ) return url;
 		if( url == null ) throw new TypeError(url + 'is not a valid url');
 
@@ -27,14 +27,6 @@
 				search   : match[8] || '',
 				hash     : match[9] || ''
 			};
-
-			/*
-			parsed.authority = '//' +
-			(parsed.username ? parsed.username + (parsed.password ? ':' + parsed.password : '') + '@' : '') +
-			parsed.host +
-			(parsed.port ? ':' + parsed.port : '');
-			*/
-
 		}
 		else{
 			throw new RangeError();
@@ -60,12 +52,12 @@
 		return output.join('').replace(/^\//, input.charAt(0) === '/' ? '/' : '');
 	}
 
-	var URI = Function.create({
+	var URL = Function.create({
 		constructor: function(url, base){
-			url = parseURI(url);
+			url = parseURL(url);
 
 			if( arguments.length > 1 ){
-				base = parseURI(base);
+				base = parseURL(base);
 				var flag = url.protocol === '' && url.host === '' && url.username === '';
 
 				if( flag && url.pathname === '' && url.search === '' ){
@@ -110,6 +102,10 @@
 			this.pathname = url.pathname;
 			this.search = url.search;
 			this.hash = url.hash;
+
+			this.origin = this.protocol;
+			if( this.protocol || this.host ) this.origin+= '//';
+			this.origin+= this.host;
 		},
 
 		toString: function(){
@@ -131,6 +127,6 @@
 		}
 	});
 
-	global.URI = URI;
+	global.URL = URL;
 
 })(jsenv.global);

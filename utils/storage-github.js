@@ -21,11 +21,17 @@ xhr.send(null);
 */
 function createGithubGetRequest(request){
 	var url = request.url;
-	var parsed = new URI(url);
+	var parsed = new URL(url);
+	var pathname = parsed.pathname;
+	var parts = pathname.slice(1).split('/');
+	var user = pathname[0];
+	var repo = pathname[1];
+	var file = pathname.slice(2);
+
 	var giturl = replace('https://api.github.com/repos/{user}/{repo}/contents/{path}?ref={version}', {
-		user: parsed.username,
-		repo: parsed.host,
-		path: parsed.pathname ? parsed.pathname.slice(1) : 'index.js',
+		user: user,
+		repo: repo,
+		path: file || 'index.js',
 		version: parsed.hash ? parsed.hash.slice(1) : 'master'
 	});
 

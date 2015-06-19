@@ -1,57 +1,60 @@
 jsenv.define('platform-http', function(){
 	var http = require('http');
 	var https = require('https');
-	var parse = require('url').parse;
+	//var parse = require('url').parse;
 
-	function createResponse(options){
-		var url = options.url;
-		var parsed = parse(url), secure;
-		Object.assign(options, parsed);
-		secure = options.protocol === 'https:';
-		options.port = secure ? 443 : 80;
+	var ProcessHttpRequest = {
+		setTimeout: function(timeout){
+			this.connection.setTimeout(timeout);
+		},
 
-		var request = (secure ? https : http).request(options), response = jsenv.store.createHttpResponse();
+		connect: function(){
+			var connection, request = this, response = this.response;
+			var url = new URL(this.url), isHttps = url.protocol === 'https:';
 
-		request.on('error', function(e){
-			response.onerror(e);
-		});
-		request.on('timeout', function(){
-			request.close();
-			response.ontimeout();
-		});
-
-		request.on('response', function(httpResponse){
-			response.open(httpResponse.statusCode, httpResponse.headers);
-
-			httpResponse.on('data', function(chunk){
-				response.write(chunk);
+			connection = (isHttps ? https : http).request({
+				method: this.method,
+				host: url.host,
+				port: url.port || (isHttps ? 443 : 80),
+				path: url.pathname + url.search,
+				headers: this.headers
 			});
-			httpResponse.on('end', function(error){
-				response.body = Buffer.concat(response.buffers, response.length);
-				response.close();
+
+			connection.on('error', function(e){
+				request.onerror(e);
 			});
-			httpResponse.on('error', function(error){
-				response.error(error);
+			connection.on('timeout', function(){
+				connection.close();
+				request.ontimeout();
 			});
-		});
+			connection.on('response', function(response){
+				response.writeHead(response.statusCode, response.headers);
+				request.onopen();
 
-		response.setTimeout = function(timeout){
-			request.setTimeout(timeout);
-		};
-		response.send = function(){
-			if( options.body ){
-				request.write(options.body);
-			}
-			else{
-				request.end();
-			}
-		};
-		response.abort = function(){
-			request.abort();
-		};
+				response.on('error', function(e){
+					request.onerror(e);
+				});
 
-		return response;
-	}
+				response.on('data', function(chunk){
+					response.write(chunk);
+				});
 
-	return createResponse;
+				response.on('end', function(){
+					response.body = Buffer.concat(response.buffers, response.length);
+					request.end();
+				});
+			});
+
+			// connection.setNoDelay(true); // disable naggle algorithm (naggle buffers request.write() calls untils they are big enough)
+			connection.end(this.body);
+		},
+
+		abort: function(){
+			this.connection.abort();
+		}
+	};
+
+	return function(){
+		return Function.extend(jsenv.store.HttpRequest, ProcessHttpRequest);
+	};
 });

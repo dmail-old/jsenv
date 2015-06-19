@@ -21,61 +21,61 @@ jsenv.define('platform-http', function(){
 		return headers;
 	}
 
-	function createResponse(options){
-		var request = new XMLHttpRequest(), response = jsenv.store.createHttpResponse();
+	var BrowserHttpRequest = {
+		connect: function(){
+			var connection = new XMLHttpRequest(), request = this, response = this.response, offset = 0, options = this.options;
 
-		try{
-			request.open(options.method, options.url);
-
-			if( options.headers ){
-				for(var key in options.headers){
-					request.setRequestHeader(key, options.headers[key]);
-				}
-			}
-
-			//request.overrideMimeType('text\/plain; charset=x-user-defined');
-			//request.responseType = 'arraybuffer';
-
-			request.onerror = function(e){
-				response.onerror(e);
+			connection.onerror = function(e){
+				request.onerror(e);
 			};
-			request.ontimeout = function(){
-				response.ontimeout();
+			connection.ontimeout = function(){
+				request.ontimeout();
 			};
-			var offset = 0;
-			request.onreadystatechange = function(){
-				if( request.readyState === 2 ){
-					response.open(request.status, parseHeaders(request.getAllResponseHeaders()));
+			connection.onreadystatechange = function(){
+				if( this.readyState === 2 ){
+					response.writeHead(this.status, parseHeaders(this.getAllResponseHeaders()));
+					request.onopen();
 				}
-				else if( request.readyState === 3 ){
-					var data = request.repsonseText;
+				else if( this.readyState === 3 ){
+					var data = this.responseText;
 
 					if( offset ) data = data.slice(offset);
 					offset+= data.length;
 
 					response.write(data);
 				}
-				else if( request.readyState === 4 ){
-					response.body = request.responseText;
-					response.close();
+				else if( this.readyState === 4 ){
+					response.body = this.responseText;
+					request.end();
 				}
 			};
-			response.setTimeout = function(timeout){
-				request.timeout = timeout;
-			};
-			response.send = function(){
-				request.send(options.body || null);
-			};
-			response.abort = function(){
-				request.abort();
-			};
-		}
-		catch(e){
-			response.onerror(e);
-		}
 
-		return response;
-	}
+			try{
+				connection.open(this.method, this.url);
 
-	return createResponse;
+				for(var key in this.headers){
+					connection.setRequestHeader(key, this.headers[key]);
+				}
+
+				connection.send(this.body);
+			}
+			catch(e){
+				this.onerror(e);
+			}
+
+			return connection;
+		},
+
+		abort: function(){
+			this.connection.abort();
+		},
+
+		setTimeout: function(timeout){
+			this.connection.timeout = timeout;
+		}
+	};
+
+	return function(){
+		return Function.extend(jsenv.store.HttpRequest, BrowserHttpRequest);
+	};
 });

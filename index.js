@@ -65,6 +65,7 @@ Function.extend = function(constructor, proto){
 	var object = Object.create(constructor.prototype);
 	for(var key in proto ) object[key] = proto[key];
 	object.constructor.prototype = object;
+	object.constructor.super = constructor;
 	return object.constructor;
 };
 
@@ -211,7 +212,7 @@ Object.complete = function(){
 
 		aliases: {
 			// dependencies
-			'URI': '/requirements/URI.js',
+			'URL': '/requirements/URL.js',
 			'setImmediate': '/requirements/setImmediate.js',
 			'Symbol': '/requirements/Symbol.js',
 			'Iterator': '/requirements/Iterator.js',
@@ -421,7 +422,7 @@ Object.complete = function(){
 
 		listEnvRequirements: function(){
 			var polyfills = [
-				'URI',
+				'URL',
 				'setImmediate', // because required by promise
 				'Symbol', // because required by iterator
 				'Iterator', // because required by promise.all
