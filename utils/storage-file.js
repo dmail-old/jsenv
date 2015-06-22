@@ -10,12 +10,15 @@ function writeFile(file, content){
 	return filesystem('writeFile', file, content);
 }
 
-function stripProtocol(url){
-	return url.slice('file://'.length);
+function stripFileProtocol(url){
+	if( url.indexOf('file://') === 0 ){
+		url = url.slice('file://'.length);
+	}
+	return url;
 }
 
 function getRequestUrl(request){
-	return stripProtocol(String(request.url));
+	return stripFileProtocol(String(request.url));
 }
 
 function createResponsePromiseForGet(options){

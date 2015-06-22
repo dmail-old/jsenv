@@ -112,8 +112,6 @@ Object.complete = function(){
 (function(){
 	// platforms
 	var Platform = Function.create({
-		retryTimeout: 100, // retry 503 request for this duration
-
 		constructor: function(env, type, options){
 			this.env = env;
 			this.type = String(type);
