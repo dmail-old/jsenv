@@ -22,19 +22,26 @@ jsenv.define('platform-http', function(){
 	}
 
 	var BrowserHttpRequest = {
+		setTimeout: function(timeout){
+			this.connection.timeout = timeout;
+			this.connection.ontimeout = function(){
+				this.request.ontimeout();
+
+				var error = new Error('server taking too long to respond');
+				error.code = 'ECONNRESET';
+				this.request.onerror(error);
+			}.bind(this);
+		},
+
 		connect: function(){
-			var connection = new XMLHttpRequest(), request = this, response = this.response, offset = 0, options = this.options;
+			var connection = new XMLHttpRequest(), request = this, offset = 0, options = this.options;
 
 			connection.onerror = function(e){
 				request.onerror(e);
 			};
-			connection.ontimeout = function(){
-				request.ontimeout();
-			};
 			connection.onreadystatechange = function(){
 				if( this.readyState === 2 ){
-					response.writeHead(this.status, parseHeaders(this.getAllResponseHeaders()));
-					request.onopen();
+					request.writeHead(this.status, parseHeaders(this.getAllResponseHeaders()));
 				}
 				else if( this.readyState === 3 ){
 					var data = this.responseText;
@@ -42,11 +49,10 @@ jsenv.define('platform-http', function(){
 					if( offset ) data = data.slice(offset);
 					offset+= data.length;
 
-					response.write(data);
+					request.write(data);
 				}
 				else if( this.readyState === 4 ){
-					response.body = this.responseText;
-					request.end();
+					request.writeEnd(this.responseText);
 				}
 			};
 
@@ -68,10 +74,8 @@ jsenv.define('platform-http', function(){
 
 		abort: function(){
 			this.connection.abort();
-		},
-
-		setTimeout: function(timeout){
-			this.connection.timeout = timeout;
+			this.connection.onreadystatechange = null;
+			this.connection.onerror = null;
 		}
 	};
 

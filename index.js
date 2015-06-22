@@ -224,6 +224,7 @@ Object.complete = function(){
 			'loader': '/lib/loader.js',
 			'config': '/lib/config.js',
 			'store': '/lib/store.js',
+			'http': '/lib/http.js',
 
 			// loaders
 			'loader-js': '/loaders/loader-js.js',
@@ -448,7 +449,8 @@ Object.complete = function(){
 				'es6-loader',
 				'loader',
 				'config',
-				'store'
+				'store',
+				'http'
 			);
 			//requirements = requirements.concat(this.listRequiredLoaders());
 			requirements = requirements.concat(this.listPlatformRequirements());
@@ -469,6 +471,7 @@ Object.complete = function(){
 
 			this.loader.setup();
 			this.store.setup();
+			this.http.setup();
 			this.platform.setup();
 		},
 

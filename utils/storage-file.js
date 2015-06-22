@@ -18,77 +18,7 @@ function getRequestUrl(request){
 	return stripProtocol(String(request.url));
 }
 
-var PromiseFakeHttpRequest = Function.extend(jsenv.HttpRequest, {
-	connect: function(){
-		this.populateResponseFromPromise(this.createPromise());
-
-		// crée une connexion qui ne peut écrire dans réponse qui si non-aborted
-		return {
-			aborted: false
-		};
-	},
-
-	abort: function(){
-		this.connection.aborted = true;
-		if( this.stream ){
-			for(var key in this.listeners){
-				this.stream.removeListener(key, this.listeners[key]);
-			}
-		}
-	},
-
-	createPromise: function(){
-		throw new Error('unimplemented createPromise()');
-	},
-
-	listenStream: function(stream){
-		var httpResponse = this.response;
-
-		this.listeners = {
-			data: function(data){ httpResponse.write(data); },
-			end: function(){ httpResponse.end(); },
-			error: function(e){ httpResponse.onerror(e); }
-		};
-
-		for(var key in this.listeners){
-			stream.addListener(key, this.listeners[key]);
-		}
-
-		this.stream = stream;
-	},
-
-	populateResponseFromPromise: function(promise){
-		var connection = this.connection, httpResponse = this.response;
-
-		return promise.then(function(response){
-			if( connection.aborted ) return;
-
-			if( typeof response === 'number' ) response = {status: response};
-
-			httpResponse.writeHead(response.status, response.headers);
-
-			if( response.body ){
-				// for streams
-				if( typeof response.body === 'object' ){
-					this.listenStream(response.body);
-				}
-				else{
-					httpResponse.write(response.body);
-				}
-			}
-			else{
-				httpResponse.end();
-			}
-
-			return httpResponse;
-		}).catch(function(e){
-			httpResponse.onerror(e);
-			return httpResponse;
-		});
-	}
-});
-
-var FakeFileHttpGetRequest = PromiseFakeHttpRequest.define(function(){
+var FakeFileHttpGetRequest = jsenv.http.extendRequest(function(){
 	var request = this, url = getRequestUrl(this), promise;
 
 	promise = filesystem('stat', url).then(function(stat){
@@ -151,7 +81,7 @@ var FakeFileHttpGetRequest = PromiseFakeHttpRequest.define(function(){
 	return promise;
 });
 
-var FakeFileHttpSetRequest = PromiseFakeHttpRequest.define(function(){
+var FakeFileHttpSetRequest = jsenv.http.extendRequest(function(){
 	var request = this;
 	var url = getRequestUrl(this);
 	var body = request.body;
