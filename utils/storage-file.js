@@ -122,12 +122,10 @@ function createResponsePromiseForSet(options){
 
 module.exports = {
 	createGetPromise: function(options){
-		var request = this.env.http.createPromiseRequest(createResponsePromiseForGet, options);
-		return this.createResponsePromiseFromRequest(request);
+		return this.createResponsePromise(createResponsePromiseForGet, options);
 	},
 
 	createSetPromise: function(options){
-		var request = this.env.http.createPromiseRequest(createResponsePromiseForSet, options);
-		return this.createResponsePromiseFromRequest(request);
+		return this.createResponsePromise(createResponsePromiseForSet, options);
 	}
 };
