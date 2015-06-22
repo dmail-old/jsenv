@@ -19,8 +19,8 @@ xhr.setRequestHeader('accept', 'application/vnd.github.v3.raw');
 xhr.setRequestHeader('if-modified-since', date.toUTCString());
 xhr.send(null);
 */
-function createGithubGetRequest(request){
-	var url = request.url;
+function completeGithubGetRequestOptions(options){
+	var url = options.url;
 	var parsed = new URL(url);
 	var pathname = parsed.pathname;
 	var parts = pathname.slice(1).split('/');
@@ -35,17 +35,16 @@ function createGithubGetRequest(request){
 		version: parsed.hash ? parsed.hash.slice(1) : 'master'
 	});
 
-	Object.complete(request, {
-		method: 'GET',
+	Object.complete(options, {
 		headers: {
 			'accept': 'application/vnd.github.v3.raw',
 			'User-Agent': 'jsenv' // https://developer.github.com/changes/2013-04-24-user-agent-required/
 		}
 	});
 
-	request.url = giturl;
+	options.url = giturl;
 
-	return request;
+	return options;
 }
 
 /*
@@ -67,7 +66,7 @@ xhr.send(JSON.stringify({
 // http://stackoverflow.com/questions/26203603/how-do-i-get-the-sha-parameter-from-github-api-without-downloading-the-whole-f
 // en mode install il suffit de faire un create file avec PUT
 // en mode update il faut update le fichier avec un PUT mais c'est plus complexe
-function createGithubSetRequest(request){
+function completeGithubSetRequestOptions(request){
 	var giturl = replace('https://api.github.com/repos/{user}/{repo}/contents/{path}', {
 
 	});
@@ -90,8 +89,15 @@ function createGithubSetRequest(request){
 }
 
 module.exports = {
-	createGetRequest: createGithubGetRequest,
-	createSetRequest: createGithubSetRequest,
-	createGetPromise: function(request){ return this.store.createHttpRequest(request); },
-	// createSetPromise: function(request){ return this.store.createHttpRequest(request); }
+	createGetPromise: function(options){
+		options = completeGithubGetRequestOptions(options);
+
+		return this.createResponsePromiseFromRequest(this.env.http.createRequest(options));
+	},
+
+	createSetPromise: function(options){
+		options = completeGithubSetRequestOptions(options);
+
+		return this.createResponsePromiseFromRequest(this.env.http.createRequest(options));
+	}
 };

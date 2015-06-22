@@ -18,12 +18,12 @@ function getRequestUrl(request){
 	return stripProtocol(String(request.url));
 }
 
-var FakeFileHttpGetRequest = jsenv.http.extendRequest(function(){
-	var request = this, url = getRequestUrl(this), promise;
+function createResponsePromiseForGet(options){
+	var url = getRequestUrl(options), promise;
 
 	promise = filesystem('stat', url).then(function(stat){
 		// new Date request if modified-since peut échouer, dans ce cas renvoyer 400 bad request
-		if( request.headers['if-modified-since'] && stat.mtime <= new Date(request.headers['if-modified-since']) ){
+		if( options.headers['if-modified-since'] && stat.mtime <= new Date(options.headers['if-modified-since']) ){
 			return {
 				status: 302,
 				headers: {
@@ -42,17 +42,37 @@ var FakeFileHttpGetRequest = jsenv.http.extendRequest(function(){
 
 	promise = promise.catch(function(error){
 		if( error ){
-			if( error.code == 'ENOENT' ) return 404;
-			// https://iojs.org/api/errors.html#errors_eacces_permission_denied
-			if( error.code === 'EACCES' ) return 403;
-			if( error.code === 'EPERM' ) return 403;
-			// file access may be temporarily blocked (by an antivirus scanning it because recently modified for instance)
-			// emfile means there is too many files currently opened
-			if( error.code === 'EBUSY' || error.code === 'EMFILE' ){
+			if( error.code == 'ENOENT' ){
 				return {
-					status: 503, // unavailable
+					status: 404
+				};
+			}
+			// https://iojs.org/api/errors.html#errors_eacces_permission_denied
+			if( error.code === 'EACCES' ){
+				return {
+					status: 403
+				};
+			}
+			if( error.code === 'EPERM' ){
+				return {
+					status: 403
+				};
+			}
+			// file access may be temporarily blocked (by an antivirus scanning it because recently modified for instance)
+			if( error.code === 'EBUSY' ){
+				return {
+					status: 503,
 					headers: {
-						'retry-after': 10 // retry in 10ms
+						'retry-after': 0.010 // retry in 10ms
+					}
+				};
+			}
+			// emfile means there is too many files currently opened
+			if( error.code === 'EMFILE' ){
+				return {
+					status: 503,
+					headers: {
+						'retry-after': 0.1 // retry in 100ms
 					}
 				};
 			}
@@ -75,16 +95,17 @@ var FakeFileHttpGetRequest = jsenv.http.extendRequest(function(){
 			};
 		}
 
-		return 500;
+		return {
+			status: 500
+		};
 	});
 
 	return promise;
-});
+}
 
-var FakeFileHttpSetRequest = jsenv.http.extendRequest(function(){
-	var request = this;
-	var url = getRequestUrl(this);
-	var body = request.body;
+function createResponsePromiseForSet(options){
+	var url = getRequestUrl(options);
+	var body = options.body;
 	var promise;
 
 	promise = mkdirto(url).then(function(){
@@ -94,4 +115,16 @@ var FakeFileHttpSetRequest = jsenv.http.extendRequest(function(){
 	});
 
 	return promise;
-});
+}
+
+module.exports = {
+	createGetPromise: function(options){
+		var request = this.env.http.createPromiseRequest(createResponsePromiseForGet, options);
+		return this.createResponsePromiseFromRequest(request);
+	},
+
+	createSetPromise: function(options){
+		var request = this.env.http.createPromiseRequest(createResponsePromiseForSet, options);
+		return this.createResponsePromiseFromRequest(request);
+	}
+};
