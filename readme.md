@@ -1,6 +1,6 @@
 ## jsenv
 
-Load & execute JavaScript accross platforms
+Universal JavaScript with dependency management & hot reloading
 
 ## Example
 
@@ -37,7 +37,7 @@ include('//foo');
 include('file:///C:/modules/foo');
 include('http://my-domain.com/modules/foo');
 include('https://external-domain.com/modules/foo');
-include('github://user@repo/foo#master');
+include('https://github.com/user/repo/foo#master');
 ```
 
 ## Function modules
