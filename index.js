@@ -222,7 +222,13 @@ Object.complete = function(){
 			'loader': '/lib/loader.js',
 			'config': '/lib/config.js',
 			'store': '/lib/store.js',
-			'http': '/lib/http.js',
+
+			'http-request': '/lib/http/http-request.js',
+			'http-response': '/lib/http/http-response.js',
+			'http-client': '/lib/http/http-client.js',
+			'http-event-stream': '/lib/http/event-stream.js',
+			'http-event-source': '/lib/http/event-source.js',
+			'http': '/lib/http/http.js',
 
 			// loaders
 			'loader-js': '/loaders/loader-js.js',
@@ -448,6 +454,11 @@ Object.complete = function(){
 				'loader',
 				'config',
 				'store',
+				'http-request',
+				'http-response',
+				'http-client',
+				'http-event-stream',
+				'http-event-source',
 				'http'
 			);
 			//requirements = requirements.concat(this.listRequiredLoaders());

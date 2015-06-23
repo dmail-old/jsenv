@@ -78,6 +78,6 @@ jsenv.define('platform-http', function(){
 	};
 
 	return function(){
-		return Function.extend(jsenv.store.HttpRequest, ProcessHttpRequest);
+		return Function.extend(jsenv.http.Request, ProcessHttpRequest);
 	};
 });
