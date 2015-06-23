@@ -241,6 +241,8 @@
 		}
 	});
 
-	global.URL = URL;
+	if( false === 'URL' in global ){
+		global.URL = URL;
+	}
 
 })(jsenv.global);
