@@ -63,9 +63,9 @@ jsenv.define('platform-http', function(){
 					connection.setRequestHeader(key, this.headers[key]);
 				}
 
-				this.body.then(function(){
-					connection.send(this.body.buffers.join(''));
-				}.bind(this));
+				this.body.readAsString().then(function(body){
+					connection.send(body);
+				});
 			}
 			catch(e){
 				this.onerror(e);
