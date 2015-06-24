@@ -1,6 +1,7 @@
 var fs = require('fs');
 var filesystem = require('./filesystem');
 var mkdirto = require('./mkdir-to');
+var mimetype = require('@dmail/mimetype');
 
 function readFile(file){
 	return filesystem('readFile', file);
@@ -38,6 +39,7 @@ function createResponsePromiseForGet(options){
 			status: 200,
 			headers: {
 				'last-modified': stat.mtime.toUTCString(),
+				'content-type': mimetype(url),
 				'content-length': stat.size
 			}
 		};

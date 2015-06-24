@@ -12,41 +12,8 @@ jsenv.define('platform-http', function(){
 			}.bind(this));
 		},
 
-		setSource: function(source){
-			if( typeof source === 'string' ){
-				this.writeEnd(source);
-			}
-			else if( typeof source === 'object' && source != null ){
-				var request = this;
-
-				this.listeners = {
-					error: function(e){ request.onerror(e); },
-					data: function(data){ request.write(data); },
-					end: function(){ request.writeEnd(Buffer.concat(request.response.buffers, request.response.length)); }
-				};
-
-				this.stream = source;
-
-				for(var key in this.listeners){
-					this.stream.addListener(key, this.listeners[key]);
-				}
-			}
-			else{
-				this.writeEnd();
-			}
-		},
-
-		clearSource: function(){
-			if( this.stream ){
-				for(var key in this.listeners){
-					this.stream.removeListener(key, this.listeners[key]);
-				}
-				this.stream = null;
-			}
-		},
-
 		connect: function(){
-			var connection, request = this;
+			var connection, request = this, response = this.response;
 			var url = new URL(this.url), isHttps = url.protocol === 'https:';
 
 			connection = (isHttps ? https : http).request({
@@ -62,18 +29,16 @@ jsenv.define('platform-http', function(){
 			});
 
 			connection.on('response', function(incomingMessage){
-				request.writeHead(incomingMessage.statusCode, incomingMessage.headers);
-				request.setSource(incomingMessage);
+				request.opened(incomingMessage.statusCode, incomingMessage.header, incomingMessage);
 			});
 
-			// connection.setNoDelay(true); // disable naggle algorithm (naggle buffers request.write() calls untils they are big enough)
-			connection.end(this.body);
+			this.body.pipeTo(connection);
 		},
 
 		abort: function(){
 			this.connection.abort();
 			this.connection.removeListener('response');
-			this.clearSource();
+			this.request.close();
 		}
 	};
 

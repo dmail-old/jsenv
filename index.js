@@ -223,6 +223,7 @@ Object.complete = function(){
 			'config': '/lib/config.js',
 			'store': '/lib/store.js',
 
+			'duplex-stream': '/lib/http/duplex-stream.js',
 			'http-request': '/lib/http/http-request.js',
 			'http-response': '/lib/http/http-response.js',
 			'http-client': '/lib/http/http-client.js',
@@ -454,6 +455,7 @@ Object.complete = function(){
 				'loader',
 				'config',
 				'store',
+				'duplex-stream',
 				'http-request',
 				'http-response',
 				'http-client',

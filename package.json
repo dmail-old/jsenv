@@ -5,6 +5,7 @@
 	"bin": "bin.js",
 	"preferGlobal": true,
 	"dependencies": {
+		"@dmail/mimetype": "git+https://github.com/dmail/mimetype"
 	},
 	"repository": {
 		"type": "git",

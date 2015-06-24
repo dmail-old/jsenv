@@ -41,7 +41,7 @@ jsenv.define('platform-http', function(){
 			};
 			connection.onreadystatechange = function(){
 				if( this.readyState === 2 ){
-					request.writeHead(this.status, parseHeaders(this.getAllResponseHeaders()));
+					request.opened(this.status, parseHeaders(this.getAllResponseHeaders()));
 				}
 				else if( this.readyState === 3 ){
 					var data = this.responseText;
@@ -49,10 +49,10 @@ jsenv.define('platform-http', function(){
 					if( offset ) data = data.slice(offset);
 					offset+= data.length;
 
-					request.write(data);
+					request.progress(data);
 				}
 				else if( this.readyState === 4 ){
-					request.writeEnd(this.responseText);
+					request.closed();
 				}
 			};
 
@@ -63,7 +63,9 @@ jsenv.define('platform-http', function(){
 					connection.setRequestHeader(key, this.headers[key]);
 				}
 
-				connection.send(this.body);
+				this.body.then(function(){
+					connection.send(this.body.buffers.join(''));
+				}.bind(this));
 			}
 			catch(e){
 				this.onerror(e);
