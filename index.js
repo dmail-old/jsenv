@@ -328,8 +328,15 @@ Object.complete = function(){
 		},
 
 		need: function(requirementName){
-			var requirementLocation = this.locate(requirementName);
-			var requirement = this.get(requirementLocation);
+			var requirementLocation, requirement;
+
+			if( typeof requirementName === 'function' ){
+				requirementLocation = requirementName.name;
+			}
+			else{
+				requirementLocation = this.locate(requirementName);
+				requirement = this.get(requirementLocation);
+			}
 
 			if( requirement ){
 				//requirement.onload = onload;
@@ -345,6 +352,11 @@ Object.complete = function(){
 				}
 				else{
 					throw new Error('you can declare a requirement only before or during loading');
+				}
+
+				if( typeof requirementName === 'function' ){
+					requirement.loaded = true;
+					requirement.onload = requirementName;
 				}
 			}
 
