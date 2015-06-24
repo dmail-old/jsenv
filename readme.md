@@ -1,6 +1,6 @@
 ## jsenv
 
-Universal JavaScript with dependency management & hot reloading
+jsenv provides dependency managements, hot reloading and let you write JavaScript running in node or the browser
 
 ## Example
 
