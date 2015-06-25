@@ -91,11 +91,11 @@ function completeGithubSetRequestOptions(request){
 module.exports = {
 	createGetPromise: function(options){
 		options = completeGithubGetRequestOptions(options);
-		return this.createResponsePromise(options);
+		return this.store.env.http.createResponsePromise(options);
 	},
 
 	createSetPromise: function(options){
 		options = completeGithubSetRequestOptions(options);
-		return this.createResponsePromise(options);
+		return this.store.env.http.createResponsePromise(options);
 	}
 };

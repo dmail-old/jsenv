@@ -1,5 +1,5 @@
 var fs = require('fs');
-var mimetype = require('@dmail/mimetype');
+var mimetype = require('../utils/mimetype');
 var filesystem = require('../utils/filesystem');
 var mkdirto = require('../utils/mkdir-to');
 
@@ -124,10 +124,10 @@ function createResponsePromiseForSet(options){
 
 module.exports = {
 	createGetPromise: function(options){
-		return this.createResponsePromise(createResponsePromiseForGet, options);
+		return this.store.env.http.createResponsePromise(createResponsePromiseForGet, options);
 	},
 
 	createSetPromise: function(options){
-		return this.createResponsePromise(createResponsePromiseForSet, options);
+		return this.store.env.http.createResponsePromise(createResponsePromiseForSet, options);
 	}
 };

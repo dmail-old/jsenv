@@ -2,10 +2,8 @@
 	"name": "jsenv",
 	"version": "0.0.1",
 	"main": "index.js",
-	"bin": "bin.js",
 	"preferGlobal": true,
 	"dependencies": {
-		"@dmail/mimetype": "git+https://github.com/dmail/mimetype"
 	},
 	"repository": {
 		"type": "git",

@@ -147,13 +147,12 @@ Object.complete = function(){
 
 		getRequirements: function(){
 			return [
-				'platform-http',
 				'platform-storages'
 			];
 		},
 
 		setup: function(){
-			this.init();
+
 		},
 
 		init: function(){
@@ -208,6 +207,8 @@ Object.complete = function(){
 		baseURI: null,
 		baseURL: './', // relative to baseURI
 
+		readyListeners: [],
+
 		aliases: {
 			// dependencies
 			'URL': '/requirements/URL.js',
@@ -224,13 +225,13 @@ Object.complete = function(){
 			'store': '/lib/store.js',
 
 			'duplex-stream': '/lib/http/duplex-stream.js',
-			'http-request': '/lib/http/http-request.js',
 			'http-response': '/lib/http/http-response.js',
+			'http-request': '/lib/http/http-request.js',
+			'http-request-promise': '/lib/http/http-request-promise.js',
+			'http-request-platform': '/lib/http/http-request-{platform}.js',
 			'http-client': '/lib/http/http-client.js',
-			'http-request-promise': '/lib/http-request-promise.js',
-			'http-request-platform': '/lib/http-request-{platform}.js',
-			'http-event-stream': '/lib/http/event-stream.js',
-			'http-event-source': '/lib/http/event-source.js',
+			'http-event-stream': '/lib/http/http-event-stream.js',
+			'http-event-source': '/lib/http/http-event-source.js',
 			'http': '/lib/http/http.js',
 
 			// loaders
@@ -321,9 +322,15 @@ Object.complete = function(){
 			var requirement = this.get(requirementLocation);
 
 			if( requirement ){
-				return requirement.value;
+				if( requirement.loaded ){
+					return requirement.value;
+				}
+				else{
+					throw new Error('requirement ' + requirementName + ' not preloaded');
+				}
 			}
 			else{
+				//requirementLocation = requirementLocation.replace(/{platform}/g, this.platform.type);
 				throw new Error('requirement ' + requirementLocation + ' not found');
 			}
 		},
@@ -357,7 +364,10 @@ Object.complete = function(){
 
 				if( typeof requirementName === 'function' ){
 					requirement.loaded = true;
-					requirement.onload = requirementName;
+					requirement.onload = function(){
+						console.log('executing fn requirement', requirementLocation);
+						requirementName();
+					};
 				}
 			}
 
@@ -430,6 +440,10 @@ Object.complete = function(){
 			this.platform.baseURL = this.platform.getBaseURL();
 			this.platform.dirname = this.platform.filename.slice(0, this.platform.filename.lastIndexOf('/'));
 
+			this.platform.name = this.platform.getName();
+			this.platform.version = this.platform.getVersion();
+			debug('platform type :', this.platform.type, '(', this.platform.name, this.platform.version, ')');
+
 			this.baseURI = this.platform.baseURL;
 			this.global = this.platform.global;
 			this.global[this.globalName] = this;
@@ -469,8 +483,10 @@ Object.complete = function(){
 				'config',
 				'store',
 				'duplex-stream',
-				'http-request',
 				'http-response',
+				'http-request',
+				'http-request-promise',
+				'http-request-platform',
 				'http-client',
 				'http-event-stream',
 				'http-event-source',
@@ -488,15 +504,15 @@ Object.complete = function(){
 			setTimeout(this.loadRequirements.bind(this), 0);
 		},
 
-		onload: function(){ // called when requirements are loaded
-			this.platform.name = this.platform.getName();
-			this.platform.version = this.platform.getVersion();
-			debug('platform type :', this.platform.type, '(', this.platform.name, this.platform.version, ')');
+		ready: function(fn){
+			this.readyListeners.push(fn);
+		},
 
-			this.loader.setup();
-			this.store.setup();
-			this.http.setup();
-			this.platform.setup();
+		onload: function(){
+			this.readyListeners.reverse().forEach(function(fn){
+				fn.call(this);
+			}, this);
+			this.platform.init();
 		},
 
 		// called when jsenv is ready
