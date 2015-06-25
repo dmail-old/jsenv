@@ -1,4 +1,4 @@
-var base64 = require('./Base64.js');
+var base64 = require('../utils/Base64.js');
 
 function replace(string, values){
 	return string.replace((/\\?\{([^{}]+)\}/g), function(match, name){
@@ -91,13 +91,11 @@ function completeGithubSetRequestOptions(request){
 module.exports = {
 	createGetPromise: function(options){
 		options = completeGithubGetRequestOptions(options);
-
-		return this.createResponsePromiseFromRequest(this.env.http.createRequest(options));
+		return this.createResponsePromise(options);
 	},
 
 	createSetPromise: function(options){
 		options = completeGithubSetRequestOptions(options);
-
-		return this.createResponsePromiseFromRequest(this.env.http.createRequest(options));
+		return this.createResponsePromise(options);
 	}
 };

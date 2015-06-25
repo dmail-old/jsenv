@@ -1,7 +1,7 @@
 var fs = require('fs');
-var filesystem = require('./filesystem');
-var mkdirto = require('./mkdir-to');
 var mimetype = require('@dmail/mimetype');
+var filesystem = require('../utils/filesystem');
+var mkdirto = require('../utils/mkdir-to');
 
 function readFile(file){
 	return filesystem('readFile', file);

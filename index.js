@@ -227,6 +227,8 @@ Object.complete = function(){
 			'http-request': '/lib/http/http-request.js',
 			'http-response': '/lib/http/http-response.js',
 			'http-client': '/lib/http/http-client.js',
+			'http-request-promise': '/lib/http-request-promise.js',
+			'http-request-platform': '/lib/http-request-{platform}.js',
 			'http-event-stream': '/lib/http/event-stream.js',
 			'http-event-source': '/lib/http/event-source.js',
 			'http': '/lib/http/http.js',
@@ -236,7 +238,6 @@ Object.complete = function(){
 			'loader-css': '/loaders/loader-css.js',
 
 			// platform
-			'platform-http': '/storages/http-{platform}.js',
 			'platform-storages': '/storages/storages-{platform}.js'
 		},
 
