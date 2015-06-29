@@ -217,13 +217,14 @@ Object.complete = function(){
 			'Iterator': '/requirements/Iterator.js',
 			'Promise': '/requirements/Promise.js',
 
-			// lib
-			'module': '/lib/module.js',
-			'es6-loader': '/lib/es6-loader.js',
-			'loader': '/lib/loader.js',
+			// lib/loader
+			'module': '/lib/loader/module.js',
+			'es6-loader': '/lib/loader/es6-loader.js',
+			'loader': '/lib/loader/loader.js',
+			'store': '/lib/loader/store.js',
+			// lib/config
 			'config': '/lib/config.js',
-			'store': '/lib/store.js',
-
+			// lib/http
 			'duplex-stream': '/lib/http/duplex-stream.js',
 			'http-response': '/lib/http/http-response.js',
 			'http-request': '/lib/http/http-request.js',
@@ -235,6 +236,8 @@ Object.complete = function(){
 			'http': '/lib/http/http.js',
 
 			// loaders
+
+			// parsers
 			'loader-js': '/loaders/loader-js.js',
 			'loader-css': '/loaders/loader-css.js',
 
