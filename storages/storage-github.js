@@ -89,6 +89,10 @@ function completeGithubSetRequestOptions(request){
 }
 
 module.exports = {
+	url: {
+		host: 'github.com'
+	},
+
 	createGetPromise: function(options){
 		options = completeGithubGetRequestOptions(options);
 		return this.store.env.http.createResponsePromise(options);

@@ -1,6 +1,6 @@
 (function(){
 
-	var CSSParser = {
+	var CSSMediaParser = {
 		type: 'text/css',
 
 		collectDependencies: function(module){
@@ -20,6 +20,7 @@
 		}
 	};
 
-	jsenv.define('parser-css', CSSParser);
+	jsenv.defineMedia('text/css', 'css', CSSMediaParser);
+	jsenv.define('parser-css', CSSMediaParser);
 
 })();

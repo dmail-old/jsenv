@@ -123,6 +123,10 @@ function createResponsePromiseForSet(options){
 }
 
 module.exports = {
+	url: {
+		protocol: 'file'
+	},
+
 	createGetPromise: function(options){
 		return this.store.env.http.createResponsePromise(createResponsePromiseForGet, options);
 	},

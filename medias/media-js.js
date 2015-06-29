@@ -1,8 +1,6 @@
 (function(){
 
-	var JavaScriptParser = {
-		type: 'application/javascript',
-
+	var JavaScriptMediaParser = {
 		collectDependencies: (function(){
 			// https://github.com/jonschlinkert/strip-comments/blob/master/index.js
 			var reLine = /(^|[^\S\n])(?:\/\/)([\s\S]+?)$/gm;
@@ -59,6 +57,7 @@
 		}
 	};
 
-	jsenv.define('parser-js', JavaScriptParser);
+	jsenv.defineMedia('application/javascript', 'js', JavaScriptMediaParser);
+	jsenv.define('parser-js', JavaScriptMediaParser);
 
 })();

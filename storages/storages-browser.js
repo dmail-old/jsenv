@@ -1,6 +1,4 @@
 jsenv.define('platform-storages', {
-	http: jsenv.createHttpStorage(),
-	https: jsenv.createHttpsStorage(),
 	file: {
 		createGetPromise: function(options){
 			return this.findStorage('http').createGetPromise(options).then(function(response){

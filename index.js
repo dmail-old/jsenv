@@ -234,12 +234,9 @@ Object.complete = function(){
 			'http-event-stream': '/lib/http/http-event-stream.js',
 			'http-event-source': '/lib/http/http-event-source.js',
 			'http': '/lib/http/http.js',
-
-			// loaders
-
-			// parsers
-			'loader-js': '/loaders/loader-js.js',
-			'loader-css': '/loaders/loader-css.js',
+			// medias
+			'media-js': '/medias/media-js.js',
+			'media-css': '/medias/media-css.js',
 
 			// platform
 			'platform-storages': '/storages/storages-{platform}.js'
@@ -329,12 +326,12 @@ Object.complete = function(){
 					return requirement.value;
 				}
 				else{
-					throw new Error('requirement ' + requirementName + ' not preloaded');
+					throw new Error('requirement not preloaded : ' + requirementName);
 				}
 			}
 			else{
 				//requirementLocation = requirementLocation.replace(/{platform}/g, this.platform.type);
-				throw new Error('requirement ' + requirementLocation + ' not found');
+				throw new Error('requirement not found : ' + requirementLocation);
 			}
 		},
 
@@ -482,9 +479,10 @@ Object.complete = function(){
 			requirements.push(
 				'module',
 				'es6-loader',
+				'store',
 				'loader',
 				'config',
-				'store',
+
 				'duplex-stream',
 				'http-response',
 				'http-request',
@@ -521,9 +519,7 @@ Object.complete = function(){
 		// called when jsenv is ready
 		init: function(){
 			if( this.mainModule ){
-				// idéalement on fera loader.createModule('modulename') qui se charge ensuite d'apeller le bon loader
-				// pour ce fichier
-				var main = this.main = this.loader.loaders.js.createModule(
+				var main = this.main = this.loader.createModule(
 					/*this.loader.normalize(*/this.mainModule//)
 				);
 
