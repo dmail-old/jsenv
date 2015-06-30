@@ -38,7 +38,7 @@ function completeGithubGetRequestOptions(options){
 	Object.complete(options, {
 		headers: {
 			'accept': 'application/vnd.github.v3.raw',
-			'User-Agent': 'jsenv' // https://developer.github.com/changes/2013-04-24-user-agent-required/
+			'user-agent': 'jsenv' // https://developer.github.com/changes/2013-04-24-user-agent-required/
 		}
 	});
 
@@ -75,7 +75,7 @@ function completeGithubSetRequestOptions(request){
 		method: 'PUT',
 		headers: {
 			'content-type': 'application/json',
-			'User-Agent': 'jsenv'
+			'user-agent': 'jsenv'
 		},
 		body: JSON.stringify({
 			message: 'update ' + giturl.pathname,

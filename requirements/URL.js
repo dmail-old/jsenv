@@ -172,7 +172,7 @@
 					var pathname = '';
 
 					if( url.pathname ){
-						if( base.host && base.username && base.pathname === '' ) pathname+= '/';
+						if( (base.host || base.username) && base.pathname === '' ) pathname+= '/';
 						pathname+= base.pathname.slice(0, base.pathname.lastIndexOf('/') + 1) + url.pathname;
 					}
 					else{
@@ -244,5 +244,7 @@
 	if( false === 'URL' in global ){
 		global.URL = URL;
 	}
+
+	console.log(String(new URL('./main.js', 'http://127.0.0.1:8081')));
 
 })(jsenv.global);
