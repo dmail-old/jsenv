@@ -56,19 +56,6 @@ function debug(){
 	console.log.apply(console, args);
 }
 
-Function.create = function(proto){
-	proto.constructor.prototype = proto;
-	return proto.constructor;
-};
-
-Function.extend = function(constructor, proto){
-	var object = Object.create(constructor.prototype);
-	for(var key in proto ) object[key] = proto[key];
-	object.constructor.prototype = object;
-	object.constructor.super = constructor;
-	return object.constructor;
-};
-
 function mapProperties(args, fn){
 	var object = args[0], i = 1, j = args.length, owner, keys, n, m;
 
@@ -107,6 +94,44 @@ Object.complete = function(){
 
 		object[key] = owner[key];
 	});
+};
+
+Function.create = function(properties){
+	var constructor;
+
+	if( properties.hasOwnProperty('constructor') ){
+		constructor = properties.constructor;
+	}
+	else{
+		constructor = function(){};
+		properties.constructor = constructor;
+	}
+
+	constructor.prototype = properties;
+
+	return constructor;
+};
+
+Function.extend = function(parentConstructor, properties){
+	var constructor, proto;
+
+	if( properties.hasOwnProperty('constructor') ){
+		constructor = properties.constructor;
+	}
+	else{
+		constructor = function(){
+			return parentConstructor.apply(this, arguments);
+		};
+		properties.constructor = constructor;
+	}
+	properties.super = parentConstructor;
+
+	proto = Object.create(parentConstructor.prototype);
+	Object.assign(proto, properties);
+
+	constructor.prototype = proto;
+
+	return constructor;
 };
 
 (function(){
