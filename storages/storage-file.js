@@ -12,8 +12,8 @@ function writeFile(file, content){
 }
 
 function stripFileProtocol(url){
-	if( url.indexOf('file://') === 0 ){
-		url = url.slice('file://'.length);
+	if( url.indexOf('file:///') === 0 ){
+		url = url.slice('file:///'.length);
 	}
 	return url;
 }
@@ -22,12 +22,12 @@ function getRequestUrl(request){
 	return stripFileProtocol(String(request.url));
 }
 
-function createResponsePromiseForGet(options){
-	var url = getRequestUrl(options), promise;
+function createResponsePromiseForGet(){
+	var request = this, url = getRequestUrl(this), promise;
 
 	promise = filesystem('stat', url).then(function(stat){
 		// new Date request if modified-since peut échouer, dans ce cas renvoyer 400 bad request
-		if( options.headers['if-modified-since'] && stat.mtime <= new Date(options.headers['if-modified-since']) ){
+		if( request.headers['if-modified-since'] && stat.mtime <= new Date(request.headers['if-modified-since']) ){
 			return {
 				status: 302,
 				headers: {
@@ -35,6 +35,7 @@ function createResponsePromiseForGet(options){
 				}
 			};
 		}
+
 		return {
 			status: 200,
 			headers: {
@@ -108,9 +109,10 @@ function createResponsePromiseForGet(options){
 	return promise;
 }
 
-function createResponsePromiseForSet(options){
-	var url = getRequestUrl(options);
-	var body = options.body;
+function createResponsePromiseForSet(){
+	var request = this;
+	var url = getRequestUrl(request);
+	var body = request.body;
 	var promise;
 
 	promise = mkdirto(url).then(function(){
