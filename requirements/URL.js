@@ -245,6 +245,4 @@
 		global.URL = URL;
 	}
 
-	console.log(String(new URL('./main.js', 'http://127.0.0.1:8081')));
-
 })(jsenv.global);

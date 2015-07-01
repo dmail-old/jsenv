@@ -510,10 +510,12 @@ Object.complete = function(){
 		},
 
 		onload: function(){
-			this.readyListeners.reverse().forEach(function(fn){
-				fn.call(this);
-			}, this);
-			this.platform.init();
+			// pas promise.all mais bien reduce pour les faire un après l'ot
+			Promise.all(this.readyListeners.reverse().map(function(fn){
+				return fn.call(this);
+			}, this)).then(function(){
+				this.platform.init();
+			}.bind(this));
 		},
 
 		// called when jsenv is ready
