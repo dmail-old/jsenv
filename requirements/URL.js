@@ -131,6 +131,12 @@
 				search   : match[8] || '',
 				hash     : match[9] || ''
 			};
+
+			if( parsed.protocol === 'file:' ){
+				parsed.pathname = '/' + parsed.hostname + ':' + parsed.pathname;
+				parsed.host = '';
+				parsed.hostname = '';
+			}
 		}
 		else{
 			throw new RangeError();
@@ -209,9 +215,14 @@
 			this.search = url.search;
 			this.hash = url.hash;
 
-			this.origin = this.protocol;
-			if( this.protocol || this.host ) this.origin+= '//';
-			this.origin+= this.host;
+			if( this.protocol != 'file:' ){
+				this.origin = this.protocol;
+				if( this.protocol || this.host ) this.origin+= '//';
+				this.origin+= this.host;
+			}
+			else{
+				this.origin = 'null';
+			}
 		},
 
 		get search(){
