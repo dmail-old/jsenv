@@ -90,7 +90,7 @@ function completeGithubSetRequestOptions(request){
 
 module.exports = {
 	url: {
-		host: 'github.com'
+		hostname: 'github.com'
 	},
 
 	createGetPromise: function(options){
