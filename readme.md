@@ -1,6 +1,6 @@
 ## jsenv
 
-jsenv provides dependency managements, hot reloading and let you write JavaScript running in node or the browser
+jsenv provides dependency managements, hot reloading and let you write JavaScript executable in node or browser environment
 
 ## Example
 
