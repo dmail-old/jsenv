@@ -226,15 +226,20 @@
 		},
 
 		get search(){
-			return this.searchParams.toString();
+			var search = this.searchParams.toString();
+			if( search ){
+				search = '?' + search;
+			}
+			return search;
 		},
 
 		set search(value){
+			if( value[0] === '?' ) value = value.slice(1);
 			this.searchParams.fromString(value);
 		},
 
 		toString: function(){
-			var url = '';
+			var url = '', search;
 
 			url+= this.protocol;
 			url+= this.protocol === '' && this.host === '' ? '' : '//';
