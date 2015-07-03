@@ -11,12 +11,12 @@ function replace(string, values){
 live example
 var giturl = 'https://api.github.com/repos/dmail/argv/contents/index.js?ref=master';
 var xhr = new XMLHttpRequest();
-var date = new Date();
-date.setMonth(0);
+//var date = new Date();
+//date.setMonth(0);
 
 xhr.open('GET', giturl);
 xhr.setRequestHeader('accept', 'application/vnd.github.v3.raw');
-xhr.setRequestHeader('if-modified-since', date.toUTCString());
+//xhr.setRequestHeader('if-modified-since', date.toUTCString());
 xhr.send(null);
 */
 function completeGithubGetRequestOptions(options){
@@ -24,16 +24,18 @@ function completeGithubGetRequestOptions(options){
 	var parsed = new URL(url);
 	var pathname = parsed.pathname;
 	var parts = pathname.slice(1).split('/');
-	var user = pathname[0];
-	var repo = pathname[1];
-	var file = pathname.slice(2);
+	var user = parts[0];
+	var repo = parts[1];
+	var file = parts.slice(2);
 
-	var giturl = replace('https://api.github.com/repos/{user}/{repo}/contents/{path}?ref={version}', {
+	var data = {
 		user: user,
 		repo: repo,
 		path: file || 'index.js',
 		version: parsed.hash ? parsed.hash.slice(1) : 'master'
-	});
+	};
+
+	var giturl = replace('https://api.github.com/repos/{user}/{repo}/contents/{path}?ref={version}', data);
 
 	Object.complete(options, {
 		headers: {
@@ -87,6 +89,13 @@ function completeGithubSetRequestOptions(options){
 
 	return options;
 }
+
+// because git respond with this content-type we have to detect the media from the extension
+jsenv.media.register('application/vnd.github.v3.raw', {
+	toMedia: function(module){
+		return jsenv.media.findByModuleExtension(module);
+	}
+});
 
 module.exports = {
 	url: {

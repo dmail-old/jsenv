@@ -43,9 +43,18 @@
 					url = url.slice('file:/'.length);
 				}
 				code+= '\n//# sourceURL=' + url;
-
 			}
-			return eval(code);
+
+			var ret;
+
+			try{
+				ret = eval(code);
+			}
+			catch(e){
+				throw new Error(e.name + ' : ' + e.message + ' in ' + url);
+			}
+
+			return ret;
 		},
 
 		parse: function(module){
@@ -57,7 +66,8 @@
 		}
 	};
 
-	jsenv.defineMedia('application/javascript', 'js', JavaScriptMediaParser);
+	jsenv.media.register('application/javascript', JavaScriptMediaParser);
+	jsenv.media.registerExtension('application/javascript', 'js');
 	jsenv.define('parser-js', JavaScriptMediaParser);
 
 })();

@@ -29,7 +29,7 @@ function createResponsePromiseForGet(request){
 		// new Date request if modified-since peut échouer, dans ce cas renvoyer 400 bad request
 		if( request.headers['if-modified-since'] && stat.mtime <= new Date(request.headers['if-modified-since']) ){
 			return {
-				status: 302,
+				status: 304,
 				headers: {
 					'last-modified': stat.mtime.toUTCString()
 				}
@@ -45,6 +45,13 @@ function createResponsePromiseForGet(request){
 			}
 		};
 	});
+
+	if( request.method != 'HEAD' ){
+		promise = promise.then(function(response){
+			response.body = fs.createReadStream(url);
+			return response;
+		});
+	}
 
 	promise = promise.catch(function(error){
 		if( error ){
@@ -86,13 +93,6 @@ function createResponsePromiseForGet(request){
 		return Promise.reject(error);
 	});
 
-	if( request.method != 'HEAD' ){
-		promise = promise.then(function(response){
-			response.body = fs.createReadStream(url);
-			return response;
-		});
-	}
-
 	/*
 	promise = promise.catch(function(error){
 		if( error ){
@@ -112,15 +112,13 @@ function createResponsePromiseForGet(request){
 }
 
 function createResponsePromiseForSet(request){
-	var url = getRequestUrl(request);
-	var body = request.body;
-	var promise;
+	var url = getRequestUrl(request), promise;
 
 	promise = mkdirto(url).then(function(){
-		body.pipeTo(fs.createWriteSream(url));
-
-		return body.then(function(){
-			return 200;
+		return request.body.pipeTo(fs.createWriteStream(url)).then(function(){
+			return {
+				status: 200
+			};
 		});
 	});
 
@@ -133,6 +131,7 @@ module.exports = {
 	},
 
 	createResponsePromiseForGet: createResponsePromiseForGet,
+	createResponsePromiseForSet: createResponsePromiseForSet,
 
 	createGetPromise: function(options){
 		return this.store.env.http.createResponsePromise(createResponsePromiseForGet, options);

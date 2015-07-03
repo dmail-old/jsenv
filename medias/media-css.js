@@ -1,8 +1,6 @@
 (function(){
 
 	var CSSMediaParser = {
-		type: 'text/css',
-
 		collectDependencies: function(module){
 			// [array of css files having @include]
 		},
@@ -20,7 +18,8 @@
 		}
 	};
 
-	jsenv.defineMedia('text/css', 'css', CSSMediaParser);
+	jsenv.media.register('text/css', CSSMediaParser);
+	jsenv.media.registerExtension('text/css', 'css');
 	jsenv.define('parser-css', CSSMediaParser);
 
 })();

@@ -468,6 +468,7 @@ Function.extend = function(parentConstructor, properties){
 			this.platform.name = this.platform.getName();
 			this.platform.version = this.platform.getVersion();
 			debug('platform type :', this.platform.type, '(', this.platform.name, this.platform.version, ')');
+			debug('baseURI', this.platform.baseURL);
 
 			this.baseURI = this.platform.baseURL;
 			this.global = this.platform.global;
