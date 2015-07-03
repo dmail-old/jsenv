@@ -22,8 +22,8 @@ function getRequestUrl(request){
 	return stripFileProtocol(String(request.url));
 }
 
-function createResponsePromiseForGet(){
-	var request = this, url = getRequestUrl(this), promise;
+function createResponsePromiseForGet(request){
+	var url = getRequestUrl(request), promise;
 
 	promise = filesystem('stat', url).then(function(stat){
 		// new Date request if modified-since peut échouer, dans ce cas renvoyer 400 bad request
@@ -86,13 +86,14 @@ function createResponsePromiseForGet(){
 		return Promise.reject(error);
 	});
 
-	if( this.method != 'HEAD' ){
+	if( request.method != 'HEAD' ){
 		promise = promise.then(function(response){
 			response.body = fs.createReadStream(url);
 			return response;
 		});
 	}
 
+	/*
 	promise = promise.catch(function(error){
 		if( error ){
 			return {
@@ -105,18 +106,20 @@ function createResponsePromiseForGet(){
 			status: 500
 		};
 	});
+	*/
 
 	return promise;
 }
 
-function createResponsePromiseForSet(){
-	var request = this;
+function createResponsePromiseForSet(request){
 	var url = getRequestUrl(request);
 	var body = request.body;
 	var promise;
 
 	promise = mkdirto(url).then(function(){
-		return writeFile(url, body).then(function(){
+		body.pipeTo(fs.createWriteSream(url));
+
+		return body.then(function(){
 			return 200;
 		});
 	});
@@ -128,6 +131,8 @@ module.exports = {
 	url: {
 		protocol: 'file'
 	},
+
+	createResponsePromiseForGet: createResponsePromiseForGet,
 
 	createGetPromise: function(options){
 		return this.store.env.http.createResponsePromise(createResponsePromiseForGet, options);
