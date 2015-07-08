@@ -40,7 +40,7 @@
 
 			this.nextIndex++;
 			itemKind = this.iterationKind;
-			key = this.keys[index];
+			key = keys[index];
 
 			if( itemKind == 'key' ){
 				return this.createResult(key, false);

@@ -251,6 +251,7 @@ Function.extend = function(parentConstructor, properties){
 			'config': '/lib/config.js',
 			// lib/http
 			'duplex-stream': '/lib/http/duplex-stream.js',
+			'http-headers': '/lib/http/http-headers.js',
 			'http-response': '/lib/http/http-response.js',
 			'http-request': '/lib/http/http-request.js',
 			'http-request-promise': '/lib/http/http-request-promise.js',
@@ -510,6 +511,7 @@ Function.extend = function(parentConstructor, properties){
 				'config',
 
 				'duplex-stream',
+				'http-headers',
 				'http-response',
 				'http-request',
 				'http-request-promise',
