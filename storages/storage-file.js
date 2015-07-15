@@ -114,8 +114,9 @@ function createResponsePromiseForGet(request){
 function createResponsePromiseForSet(request){
 	var url = getRequestUrl(request), promise;
 
+	// faudrais renvoyer last-modified, size et tout non?
 	promise = mkdirto(url).then(function(){
-		return request.body.pipeTo(fs.createWriteStream(url)).then(function(){
+		return request.body.pipe(fs.createWriteStream(url)).then(function(){
 			return {
 				status: 200
 			};
