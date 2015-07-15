@@ -192,7 +192,7 @@ Function.extend = function(parentConstructor, properties){
 		value: undefined,
 
 		constructor: function(options, callback){
-			if( typeof options === 'string' ){
+			if( typeof options === 'string' || typeof options === 'function' ){
 				options = {location: options};
 			}
 
@@ -210,13 +210,69 @@ Function.extend = function(parentConstructor, properties){
 
 		},
 
+		getLocation: function(){
+			var location = this.location;
+
+			location =  location.replace(/{platform}/g, jsenv.platform.type);
+
+			// / means relative to the jsenv dirname here, not the env root
+			if( location[0] === '/' ){
+				location = jsenv.platform.dirname + location;
+			}
+			else if( location.slice(0, 2) === './' ){
+				location = jsenv.baseURI + location.slice(2);
+			}
+
+			return location;
+		},
+
+		load: function(listener){
+			if( this.loaded ){
+				this.onload(this.value);
+				listener();
+			}
+			else if( typeof this.location === 'function' ){
+				if( this.location.length === 0 ){
+					this.location();
+					listener();
+				}
+				else{
+					this.location(function(e){
+						if( e ){
+							this.fail(e);
+						}
+						else{
+							this.complete();
+							listener();
+						}
+					}.bind(this));
+				}
+			}
+			else{
+				//debug('REQUIRE', this.location);
+				jsenv.platform.load(this.getLocation(), function(error){
+					if( error ){
+						this.fail(error);
+					}
+					else{
+						//debug('REQUIRED', this.location);
+						this.complete();
+						listener();
+					}
+				}.bind(this));
+			}
+		},
+
 		complete: function(){
 			this.loaded = true;
 			this.onload(this.value);
 		},
 
 		fail: function(error){
-			throw error;
+			// in case it's called from a promise
+			setTimeout(function(){
+				throw error;
+			}, 0);
 			//new Error('An error occured during requirement loading at ' + this.location + '\n' + error);
 		}
 	});
@@ -236,6 +292,7 @@ Function.extend = function(parentConstructor, properties){
 
 		aliases: {
 			// dependencies
+			'URLSearchParams': '/requirements/URLSearchParams.js',
 			'URL': '/requirements/URL.js',
 			'setImmediate': '/requirements/setImmediate.js',
 			'Symbol': '/requirements/Symbol.js',
@@ -366,15 +423,16 @@ Function.extend = function(parentConstructor, properties){
 			var requirementLocation, requirement;
 
 			if( typeof requirementName === 'function' ){
-				requirementLocation = requirementName.name;
+				requirementLocation = requirementName;
 			}
 			else{
 				requirementLocation = this.locate(requirementName);
-				requirement = this.get(requirementLocation);
 			}
 
+			requirement = this.get(requirementLocation);
+
 			if( requirement ){
-				//requirement.onload = onload;
+				throw new Error('you can declare a need to ' + requirementLocation + ' once');
 			}
 			else{
 				requirement = this.createRequirement(requirementLocation);
@@ -388,14 +446,6 @@ Function.extend = function(parentConstructor, properties){
 				else{
 					throw new Error('you can declare a requirement only before or during loading');
 				}
-
-				if( typeof requirementName === 'function' ){
-					requirement.loaded = true;
-					requirement.onload = function(){
-						console.log('executing fn requirement', requirementLocation);
-						requirementName();
-					};
-				}
 			}
 
 			return requirement;
@@ -404,42 +454,9 @@ Function.extend = function(parentConstructor, properties){
 		loadRequirements: function(){
 			this.state = 'loading';
 
-			var self = this, requirements = this.requirements, requirement, location;
+			var self = this, requirements = this.requirements, requirement;
 
 			self.requirementLoadIndex = 0;
-
-			function loadRequirement(){
-				if( requirement.loaded ){
-					requirement.onload(requirement.value);
-					nextRequirement();
-				}
-				else{
-					location = requirement.location;
-					location = location.replace(/{platform}/g, self.platform.type);
-
-					// / means relative to the jsenv dirname here, not the env root
-					if( location[0] === '/' ){
-						location = self.platform.dirname + location;
-					}
-					else if( location.slice(0, 2) === './' ){
-						location = self.baseURI + location.slice(2);
-					}
-
-					debug('REQUIRE', requirement.location);
-					self.platform.load(location, onRequirementLoad);
-				}
-			}
-
-			function onRequirementLoad(error){
-				if( error ){
-					requirement.fail(error);
-				}
-				else{
-					requirement.complete();
-					//debug('REQUIRED', requirement.path);
-					nextRequirement();
-				}
-			}
 
 			function nextRequirement(){
 				if( self.requirementLoadIndex >= self.requirements.length ){
@@ -450,7 +467,7 @@ Function.extend = function(parentConstructor, properties){
 				else{
 					requirement = self.requirements[self.requirementLoadIndex];
 					self.requirementLoadIndex++;
-					loadRequirement();
+					requirement.load(nextRequirement);
 				}
 			}
 
@@ -483,6 +500,7 @@ Function.extend = function(parentConstructor, properties){
 
 		listEnvRequirements: function(){
 			var polyfills = [
+				'URLSearchParams',
 				'URL',
 				'setImmediate', // because required by promise
 				'Symbol', // because required by iterator
