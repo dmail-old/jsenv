@@ -1,4 +1,8 @@
 (function(global){
+	var generate = jsenv.es6.iterator.generate;
+	var done = jsenv.es6.iterator.done;
+	var polyfill = jsenv.es6.iterator.polyfill;
+
 	var Iterator = Function.create({
 		constructor: function(object, keyOnly){
 			if( arguments.length === 0 ){
@@ -15,27 +19,15 @@
 
 			this.iteratedObject = object;
 			this.iterationKind = typeof keyOnly === 'string' ? keyOnly : keyOnly ? 'key' : 'key+value';
-			this.result = {done: true, value: undefined};
 			this.nextIndex = 0;
 			this.iteratedKeys = Object.keys(object);
-		},
-
-		createResult: function(value, done){
-			this.result = {};
-			this.result.value = value;
-			this.result.done = done;
-			return this.result;
-		},
-
-		done: function(){
-			return this.createResult(undefined, true);
 		},
 
 		next: function(){
 			var index = this.nextIndex, keys = this.iteratedKeys, length = keys.length, itemKind, key, object;
 
 			if( index >= length ){
-				return this.createResult(undefined, true);
+				throw new Error();
 			}
 
 			this.nextIndex++;
@@ -43,24 +35,43 @@
 			key = keys[index];
 
 			if( itemKind == 'key' ){
-				return this.createResult(key, false);
+				return key;
 			}
 
 			object = this.iteratedObject;
 
 			if( itemKind == 'value' ){
-				return this.createResult(object[key], false);
+				return object[key];
 			}
 
-			return this.createResult([key, object[key]], false);
+			return [key, object[key]];
 		},
 
 		toString: function(){
 			return '[object Object]';
 		}
 	});
+
+	// in firefox the following line of code
+	// var o = {foo: 'bar'}; var it = Iterator(o); var ita = it[Symbol.iterator](); var itb = it[Symbol.iterator](); ita.next(); itb.next();
+	// results in done = true, it means the iterator used is the same
 	Iterator.prototype[Symbol.Iterator] = function(){
-		return this;
+		var self = this;
+
+		return {
+			next: function(){
+				var value;
+
+				try{
+					value = generate(self.next());
+				}
+				catch(e){
+					value = done();
+				}
+
+				return value;
+			}
+		};
 	};
 
 	// see http://people.mozilla.org/~jorendorff/es6-draft.html#sec-array-iterator-objects
@@ -80,27 +91,30 @@
 			var index = this.nextIndex, array = this.iteratedObject, length = array.length, itemKind;
 
 			if( index >= length ){
-				return this.createResult(undefined, true);
+				return done();
 			}
 
 			this.nextIndex++;
 			itemKind = this.iterationKind;
 
 			if( itemKind == 'key' ){
-				return this.createResult(index, false);
+				return generate(index);
 			}
 
 			if( itemKind == 'value' ){
-				return this.createResult(array[index], false);
+				return generate(array[index]);
 			}
 
-			return this.createResult([index, array[index]], false);
+			return generate([index, array[index]]);
 		},
 
 		toString: function(){
 			return '[object Array Iterator]';
 		}
 	});
+	ArrayIterator.prototype[Symbol.iterator] = function(){
+		return this;
+	};
 
 	// see http://people.mozilla.org/~jorendorff/es6-draft.html#sec-%stringiteratorprototype%.next
 	var StringIterator = Function.extend(Iterator, {
@@ -126,7 +140,7 @@
 
 			if( position >= length ){
 				this.string = null;
-				return this.createResult(undefined, true);
+				return done();
 			}
 
 			var char = string[position];
@@ -140,35 +154,19 @@
 				this.nextIndex++;
 			}
 
-			return this.createResult(char, false);
+			return generate(char);
 		},
 
 		toString: function(){
 			return '[object StringIterator]';
 		}
 	});
+	StringIterator.prototype[Symbol.iterator] = function(){
+		return this;
+	};
 
-	function definePrototypeProperty(constructor, property, value){
-		if( false === property in constructor.prototype ){
-			Object.defineProperty(constructor.prototype, Symbol.iterator, {
-				enumerable: false,
-				writable: true,
-				value: value
-			});
-		}
-	}
-
-	function polyfill(constructor, iterator){
-		definePrototypeProperty(constructor, Symbol.iterator, function(){
-			return new Iterator(this);
-		});
-	}
-
-	polyfill(Array, ArrayIterator);
 	polyfill(String, StringIterator);
-	definePrototypeProperty(Array, 'values', function(){
-		return new ArrayIterator(this, 'value');
-	});
+	polyfill(Array, ArrayIterator, true);
 	if( !global.Iterator ) global.Iterator = Iterator;
 
 })(jsenv.global);

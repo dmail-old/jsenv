@@ -10,34 +10,6 @@ https://github.com/ModuleLoader/es6-module-loader/wiki/Extending-the-ES6-Loader
 
 */
 
-function forOf(iterable, fn, bind){
-	var method, iterator, next;
-
-	method = iterable[Symbol.iterator];
-
-	if( typeof method !== 'function' ){
-		throw new TypeError(iterable + 'is not iterable');
-	}
-
-	if( typeof fn != 'function' ){
-		throw new TypeError('second argument must be a function');
-	}
-
-	iterator = method.call(iterable);
-	next = iterator.next();
-	while( next.done === false ){
-		if( fn.call(bind, next.value) === true ){
-			if( typeof iterator['return'] === 'function' ){
-				iterator['return']();
-			}
-			break;
-		}
-		next = iterator.next();
-	}
-
-	return this;
-}
-
 function debug(){
 	var args = Array.prototype.slice.call(arguments);
 
@@ -135,6 +107,128 @@ Function.extend = function(parentConstructor, properties){
 };
 
 (function(){
+	var es6Iterator = {
+		forOf: function(iterable, fn, bind){
+			var method, iterator, next;
+
+			method = iterable[Symbol.iterator];
+
+			if( typeof method !== 'function' ){
+				throw new TypeError(iterable + 'is not iterable');
+			}
+
+			if( typeof fn != 'function' ){
+				throw new TypeError('second argument must be a function');
+			}
+
+			iterator = method.call(iterable);
+			next = iterator.next();
+			while( next.done === false ){
+				if( fn.call(bind, next.value) === true ){
+					if( typeof iterator['return'] === 'function' ){
+						iterator['return']();
+					}
+					break;
+				}
+				next = iterator.next();
+			}
+		},
+
+		createResult: function(value, done){
+			var result = {};
+
+			result.value = value;
+			result.done = done;
+
+			return result;
+		},
+
+		generate: function(value){
+			return es6Iterator.createResult(value, false);
+		},
+
+		done: function(){
+			return es6Iterator.createResult(undefined, true);
+		},
+
+		defineProperty: function(object, property, value, safe){
+			if( !safe || false === object.hasOwnProperty(property) ){
+				Object.defineProperty(object, property, {
+					enumerable: false,
+					writable: true,
+					value: value
+				});
+			}
+		},
+
+		implement: function(constructor, IteratorConstructor, addMethods, safe){
+			if( typeof IteratorConstructor == 'string' ){
+				var property = IteratorConstructor;
+				IteratorConstructor = Function.extend(ObjectIterator, {
+					constructor: function(item, iterationType){
+						return ObjectIterator.call(this, item[property], iterationType);
+					}
+				});
+			}
+
+			es6Iterator.defineProperty(constructor.prototype, Symbol.iterator, function(){
+				return new IteratorConstructor(this);
+			}, safe);
+
+			if( addMethods ){
+				['keys', 'values', 'entries'].forEach(function(iterationType){
+					es6Iterator.defineProperty(constructor.prototype, iterationType, function(){
+						return new IteratorConstructor(this, iterationType == 'entries' ? 'key+value' : iterationType);
+					});
+				});
+			}
+		},
+
+		polyfill: function(constructor, IteratorConstructor, addMethods){
+			return es6Iterator.implement(constructor, IteratorConstructor, addMethods, true);
+		}
+	};
+
+	var ObjectIterator = Function.create({
+		constructor: function(object, kind){
+			this.object = object;
+			this.kind = kind || 'key+value';
+			this.nextIndex = 0;
+			this.keys = Object.keys(object);
+		},
+
+		next: function(){
+			var index = this.nextIndex, keys = this.keys, length = keys.length, kind, key, object;
+
+			if( index >= length ){
+				return es6Iterator.done();
+			}
+
+			this.nextIndex++;
+			kind = this.kind;
+			key = keys[index];
+
+			if( kind == 'key' ){
+				return es6Iterator.generate(key);
+			}
+
+			object = this.object;
+			if( kind == 'value' ){
+				return es6Iterator.generate(object[key]);
+			}
+
+			return es6Iterator.generate([key, object[key]]);
+		},
+
+		toString: function(){
+			return '[object ObjectIterator]';
+		}
+	});
+
+	var es6 = {
+		iterator: es6Iterator
+	};
+
 	// platforms
 	var Platform = Function.create({
 		constructor: function(env, type, options){
@@ -279,6 +373,7 @@ Function.extend = function(parentConstructor, properties){
 
 	var jsenv = {
 		state: 'created',
+		es6: es6,
 
 		// platforms
 		platforms: [],
@@ -492,7 +587,7 @@ Function.extend = function(parentConstructor, properties){
 			this.baseURI = this.platform.baseURL;
 			this.global = this.platform.global;
 			this.global[this.globalName] = this;
-			this.global.forOf = this.forOf = forOf;
+			this.global.forOf = this.forOf = es6.iterator.forOf;
 			this.global.debug = debug;
 
 			this.setupRequirements();
@@ -645,6 +740,10 @@ Function.extend = function(parentConstructor, properties){
 			return navigator.platform.toLowerCase();
 		},
 
+		getRequirements: function(){
+			return Platform.prototype.getRequirements.call(this).concat('./index-browser.js');
+		},
+
 		init: function(){
 			function ready(){
 				var scripts = document.getElementsByTagName('script'), i = 0, j = scripts.length, script;
@@ -758,6 +857,11 @@ Function.extend = function(parentConstructor, properties){
 
 	jsenv.platforms.push(jsenv.createPlatform('browser', browserPlatform));
 	jsenv.platforms.push(jsenv.createPlatform('process', processPlatform));
+	jsenv.ready(function(){
+		ObjectIterator.prototype[Symbol.iterator] = function(){
+			return this;
+		};
+	});
 
 	jsenv.setup();
 })();
