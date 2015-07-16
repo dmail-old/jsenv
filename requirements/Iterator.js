@@ -14,7 +14,7 @@
 			object = Object(object); // will convert "a" into new String("a") for instance
 
 			this.iteratedObject = object;
-			this.iterationKind = keyOnly ? 'key' : 'key+value';
+			this.iterationKind = typeof keyOnly === 'string' ? keyOnly : keyOnly ? 'key' : 'key+value';
 			this.result = {done: true, value: undefined};
 			this.nextIndex = 0;
 			this.iteratedKeys = Object.keys(object);
@@ -148,20 +148,27 @@
 		}
 	});
 
-	function polyfill(constructor, iterator){
-		if( !(Symbol.iterator in constructor.prototype) ){
+	function definePrototypeProperty(constructor, property, value){
+		if( false === property in constructor.prototype ){
 			Object.defineProperty(constructor.prototype, Symbol.iterator, {
 				enumerable: false,
 				writable: true,
-				value: function(){
-					return new iterator(this);
-				}
+				value: value
 			});
 		}
 	}
 
+	function polyfill(constructor, iterator){
+		definePrototypeProperty(constructor, Symbol.iterator, function(){
+			return new Iterator(this);
+		});
+	}
+
 	polyfill(Array, ArrayIterator);
 	polyfill(String, StringIterator);
+	definePrototypeProperty(Array, 'values', function(){
+		return new ArrayIterator(this, 'value');
+	});
 	if( !global.Iterator ) global.Iterator = Iterator;
 
 })(jsenv.global);
