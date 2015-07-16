@@ -45,16 +45,7 @@
 				code+= '\n//# sourceURL=' + url;
 			}
 
-			var ret;
-
-			try{
-				ret = eval(code);
-			}
-			catch(e){
-				throw new Error(e.name + ' : ' + e.message + ' in ' + url);
-			}
-
-			return ret;
+			return eval(code);
 		},
 
 		parse: function(module){

@@ -570,21 +570,11 @@ Function.extend = function(parentConstructor, properties){
 		// called when jsenv is ready
 		init: function(){
 			if( this.mainModule ){
-				var main = this.main = this.loader.createModule(
-					/*this.loader.normalize(*/this.mainModule//)
-				);
-
 				debug('main module', this.mainModule);
 
-				main.then(function(){
-					console.log('parsing main');
-					main.parse();
-					main.execute();
-				}).catch(function(error){
-					setImmediate(function(){
-						throw error;
-					});
-				});
+				this.include(this.mainModule).then(function(main){
+					this.main = main;
+				}.bind(this));
 			}
 		}
 	};
