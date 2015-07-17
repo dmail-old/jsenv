@@ -48,8 +48,12 @@
 			return eval(code);
 		},
 
+		translate: function(module){
+			return '(function(module, include){\n\n' + module.body + '\n\n});';
+		},
+
 		parse: function(module){
-			return this.eval('(function(module, include){\n\n' + module.source + '\n\n});', module.address);
+			return this.eval(module.source, module.address);
 		},
 
 		execute: function(module){
