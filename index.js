@@ -176,9 +176,13 @@ Function.extend = function(parentConstructor, properties){
 			}, safe);
 
 			if( addMethods ){
-				['keys', 'values', 'entries'].forEach(function(iterationType){
-					es6Iterator.defineProperty(constructor.prototype, iterationType, function(){
-						return new IteratorConstructor(this, iterationType == 'entries' ? 'key+value' : iterationType);
+				[
+					{method: 'keys', kind: 'key'},
+					{method: 'values', kind: 'value'},
+					{method: 'entries', kind: 'key+value'}
+				].forEach(function(iteration){
+					es6Iterator.defineProperty(constructor.prototype, iteration.method, function(){
+						return new IteratorConstructor(this, iteration.kind);
 					});
 				});
 			}
