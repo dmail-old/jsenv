@@ -49,7 +49,23 @@
 		},
 
 		translate: function(module){
-			return '(function(module, include){\n\n' + module.body + '\n\n});';
+			var body = module.body;
+
+			// https://regex101.com/
+
+			body = body.replace(/import (?:\*|.+ as )?(.+) from ([^;\n]+);/g, function(match, what, where){
+				return 'var ' + what + ' = include(' + where + ');';
+			});
+			body = body.replace(/export default /, 'return ');
+			/*
+			body = body.replace(/export default ([.\s\S]+)/, function(match, code){
+				return 'return ' + code;
+			});
+			*/
+
+			body = '(function(module, include){\n\n' + body + '\n\n});';
+
+			return body;
 		},
 
 		parse: function(module){
