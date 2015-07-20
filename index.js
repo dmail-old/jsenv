@@ -331,8 +331,13 @@ Function.extend = function(parentConstructor, properties){
 			}
 			else if( typeof this.location === 'function' ){
 				if( this.location.length === 0 ){
-					this.location();
-					listener();
+					try{
+						this.location();
+						listener();
+					}
+					catch(e){
+						listener(e);
+					}
 				}
 				else{
 					this.location(function(e){
@@ -414,8 +419,6 @@ Function.extend = function(parentConstructor, properties){
 			'http-request-promise': '/lib/http/http-request-promise.js',
 			'http-request-platform': '/lib/http/http-request-{platform}.js',
 			'http-client': '/lib/http/http-client.js',
-			'http-event-stream': '/lib/http/http-event-stream.js',
-			'http-event-source': '/lib/http/http-event-source.js',
 			'http': '/lib/http/http.js',
 			// medias
 			'media-js': '/medias/media-js.js',
@@ -540,7 +543,8 @@ Function.extend = function(parentConstructor, properties){
 					this.requirements.push(requirement);
 				}
 				else if( this.state == 'loading' ){
-					this.requirements.splice(this.requirementLoadIndex, 0, requirement);
+					this.requirements.push(requirement);
+					//this.requirements.splice(this.requirementLoadIndex, 0, requirement);
 				}
 				else{
 					throw new Error('you can declare a requirement only before or during loading');
@@ -636,8 +640,6 @@ Function.extend = function(parentConstructor, properties){
 				'http-request-promise',
 				'http-request-platform',
 				'http-client',
-				'http-event-stream',
-				'http-event-source',
 				'http'
 			);
 			//requirements = requirements.concat(this.listRequiredLoaders());
