@@ -22,19 +22,19 @@ Array.from(headers.keys()); // ['accept']
 Array.from(headers.entries()); // [['accept'], [['html']]]
 ```
 
-## createStream(init)
+## createBody(init)
 
 Object representing http body of request or response. It wraps node & browser streams under a common API.
 
 ```javascript
-var stream = http.createStream();
+var body = http.createStream();
 
-stream.pipeTo(writableStream); // writableStream can be a [node one](https://nodejs.org/api/stream.html#stream_class_stream_writable) or a [browser one](https://streams.spec.whatwg.org/#ws-class)
-stream.close(); // close this stream and all piped streams & remove pipes
-stream.tee(); // returns an array of two streams that you can consume or not
-stream.then(onResolve, onError); // onResolve is called when the stream is closed, onError if an error occurs
-stream.readAsString(); // return a promise fullfilled with stream body as string or rejected if an error occurs
-stream.cancel(); // clear all data
+body.pipeTo(writableStream); // writableStream can be a [node one](https://nodejs.org/api/stream.html#stream_class_stream_writable) or a [browser one](https://streams.spec.whatwg.org/#ws-class)
+body.close(); // close this stream and all piped streams & remove pipes
+body.tee(); // returns an array of two streams that you can consume or not
+body.then(onResolve, onError); // onResolve is called when the body is closed, onError if an error occurs
+body.readAsString(); // return a promise fullfilled with body as string or rejected if an error occurs
+body.cancel(); // clear all data
 ```
 
 Depending on init value the stream behave differently :
