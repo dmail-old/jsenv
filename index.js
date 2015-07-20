@@ -183,7 +183,7 @@ Function.extend = function(parentConstructor, properties){
 				].forEach(function(iteration){
 					es6Iterator.defineProperty(constructor.prototype, iteration.method, function(){
 						return new IteratorConstructor(this, iteration.kind);
-					});
+					}, safe);
 				});
 			}
 		},
