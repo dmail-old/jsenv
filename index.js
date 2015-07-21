@@ -561,8 +561,11 @@ Function.extend = function(parentConstructor, properties){
 
 			self.requirementLoadIndex = 0;
 
-			function nextRequirement(){
-				if( self.requirementLoadIndex >= self.requirements.length ){
+			function nextRequirement(error){
+				if( error ){
+					throw error;
+				}
+				else if( self.requirementLoadIndex >= self.requirements.length ){
 					//debug('ALL-REQUIREMENTS-COMPLETED');
 					self.state = 'loaded';
 					self.onload();
@@ -746,10 +749,6 @@ Function.extend = function(parentConstructor, properties){
 			return navigator.platform.toLowerCase();
 		},
 
-		getRequirements: function(){
-			return Platform.prototype.getRequirements.call(this).concat('./index-browser.js');
-		},
-
 		init: function(){
 			function ready(){
 				var scripts = document.getElementsByTagName('script'), i = 0, j = scripts.length, script;
@@ -805,10 +804,14 @@ Function.extend = function(parentConstructor, properties){
 		},
 
 		getBaseURL: function(){
-			var baseUrl = 'file://' + process.cwd() + '/';
+			var baseUrl;
 
+			baseUrl = 'file://' + process.cwd();
 			if( process.platform.match(/^win/) ){
 				baseUrl = baseUrl.replace(/\\/g, '/');
+			}
+			if( baseUrl[baseUrl.length - 1] != '/' ){
+				baseUrl+= '/';
 			}
 
 			return baseUrl;
