@@ -41,8 +41,8 @@ function completeGithubGetRequestOptions(options){
 		'user-agent': 'jsenv' // https://developer.github.com/changes/2013-04-24-user-agent-required/
 	};
 
-	if( data.user && process.env['github-' + data.user + '-token'] ){
-		headers['authorization'] = 'token ' + process.env['github-' + data.user + '-token'];
+	if( data.user && jsenv.config['github-' + data.user + '-token'] ){
+		headers['authorization'] = 'token ' + jsenv.config['github-' + data.user + '-token'];
 	}
 
 	Object.complete(options, {headers: headers});
