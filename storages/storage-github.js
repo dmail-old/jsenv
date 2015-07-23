@@ -36,13 +36,16 @@ function completeGithubGetRequestOptions(options){
 	};
 
 	var giturl = replace('https://api.github.com/repos/{user}/{repo}/contents/{path}?ref={version}', data);
+	var headers = {
+		'accept': 'application/vnd.github.v3.raw',
+		'user-agent': 'jsenv' // https://developer.github.com/changes/2013-04-24-user-agent-required/
+	};
 
-	Object.complete(options, {
-		headers: {
-			'accept': 'application/vnd.github.v3.raw',
-			'user-agent': 'jsenv' // https://developer.github.com/changes/2013-04-24-user-agent-required/
-		}
-	});
+	if( data.user && process.env['github-' + data.user + '-token'] ){
+		headers['authorization'] = 'token ' + process.env['github-' + data.user + '-token'];
+	}
+
+	Object.complete(options, {headers: headers});
 
 	options.url = giturl;
 
